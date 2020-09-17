@@ -16,6 +16,9 @@ Those three subnetworks only apply to each of the
 
 The three parts of the network are combined in the class model_RNNVAE
 
+Alternative implmeentation:
+https://github.com/crazysal/VariationalRNN/blob/master/VariationalRecurrentNeuralNetwork-master/model.py
+
 """
 import numpy as np
 import torch
@@ -148,6 +151,7 @@ class model_RNNVAE(nn.Module):
         """
         phi_list = [] 
         for _ in range(n_layers):
+            # Here we coould add non-linearities if needed
             phi_list.append(nn.Linear(input_size, hidden_size))
             input_size = hidden_size
         phi_model = torch.nn.ModuleList(phi_list)
@@ -162,11 +166,14 @@ class model_RNNVAE(nn.Module):
         """
         var_list = []
         for _ in range(n_layers):
+            # Here we coould add non-linearities if needed
             var_list.append(nn.Linear(input_size, hidden_size))
             input_size = hidden_size
 
         var_block = torch.nn.ModuleList(var_list)
 
+        #TODO: MU COULD BE USING A SIGMOID FOR THE OUTPUT
+        #TODO: LOGVAR COULD BE USING A SOFTPLUS
         to_mu = nn.Linear(input_size, latent_size)
         to_logvar = nn.Linear(input_size, latent_size)
         #Last layers, to obtain from the same tal both outputs  
@@ -231,7 +238,7 @@ class model_RNNVAE(nn.Module):
         TODO: DEBUG VERY WELL FOR DIMENSIONALITIES
         OF THE VARIOUS SEQUENCES
         """
-        ht = self.h0
+        ht = self.Variable(torch.zeros(self.n_layers, x.size(1), self.h_size))
         # TODO. Do the xpred in a tensor way
         x_pred = []
         qzx = []
@@ -304,10 +311,10 @@ class model_RNNVAE(nn.Module):
 				current_batch = 0
 				for local_batch in data:
 					print("Batch # {} / {}".format(current_batch, len(data) - 1), end='\t')
-					loss = self.optimize_batch(local_batch)
+					loss = self.fit_batch(local_batch)
 					current_batch += 1
 			else:
-				loss = self.optimize_batch(data)
+				loss = self.fit_batch(data)
 
 			if np.isnan(loss):
 				print('Loss is nan!')
@@ -331,8 +338,16 @@ class model_RNNVAE(nn.Module):
         Loss function uses loss from the various
         times and stats
         """
-        print('nYI')
+        x = fwd_return['x']
+		qzx = fwd_return['qzx']
+		pxz = fwd_return['pxz']
 
+		kl = 0
+		ll = 0
+        #Wstudari-ho bé
+		for t in range(x.size(0)):
+            kl += self.KL_fn(qzx[i], Normal(0, 1)).sum(1).mean(0)
+            ll += pxz[i].log_prob(x[i]).sum(1).mean(0)
 
         if self.training:
 			self.save_loss(losses)
