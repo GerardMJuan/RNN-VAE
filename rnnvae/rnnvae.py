@@ -88,6 +88,7 @@ class PhiBlock(nn.Module):
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.phi_layers.append(nn.Linear(self.input_size, self.hidden_size))
+            #self.phi_layers.append(nn.ReLU())
             self.input_size = self.hidden_size
 
     def forward(self, x):
@@ -120,6 +121,7 @@ class VariationalBlock(nn.Module):
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.var_layers.append(nn.Linear(self.input_size, self.hidden_size))
+            #self.var_layers.append(nn.ReLU())
             self.input_size = self.hidden_size
 
         #TODO: MU COULD BE USING A SIGMOID FOR THE OUTPUT
@@ -166,7 +168,7 @@ class ModelRNNVAE(nn.Module):
 
     def __init__(self, x_size, h_size, phi_x_hidden, phi_x_n, 
                  phi_z_hidden, phi_z_n, enc_hidden,
-                 enc_n, latent, dec_hidden, dec_n, clip, cuda=True,
+                 enc_n, latent, dec_hidden, dec_n, clip, nepochs, batch_size, cuda=True,
                  print_every=1):
 
         super().__init__()
@@ -196,6 +198,8 @@ class ModelRNNVAE(nn.Module):
         # other parameters
         self.clip = clip
         self.print_every = print_every
+        self.batch_size = batch_size # we only use  this for loss visualization
+        self.epochs = nepochs
 
         # Building blocks
         ## PRIOR 
@@ -218,6 +222,7 @@ class ModelRNNVAE(nn.Module):
         #Init KL and loss
         self.optimizer = None
         self.init_KL()
+        self.init_loss()
 
     def sample_from(self, qzx):
         """
@@ -265,6 +270,48 @@ class ModelRNNVAE(nn.Module):
         
         return xnext, hnext, z_prior, zx_t, qzx_t, pxz_t
 
+    def sample_latent(self, nsamples, nt):
+        """
+        Sample a number of samples from a trained latent space
+        nsamples: number of generated samples
+        nt: number of timepoints
+        
+        returns a numpy object of X x X x X (NYI), with 
+        """
+        self.eval()
+        sample_list = []
+
+        if self.is_fitted:
+            with torch.no_grad():
+                # Sample from latent z a number of times
+                # for each sample
+                for n in range(nsamples):
+                    sample = torch.zeros(nt, self.x_dim)
+                    h = Variable(torch.zeros(self.n_layers, 1, self.h_dim))
+                    for t in range(nt):
+                        # Sampling from the prior
+                        z_prior = self.prior(ht[-1])
+                        z_t = z_prior.rsample() #Hard sampling because we want variation
+
+                        # Apply phi_z
+                        phi_z_t = self.phi_z(z_t)
+
+                        # decoder
+                        dec_t = self.decoder(torch.cat([phi_z_t, h[-1]], 1))
+                        x_t = self.sample_from(dec_t)
+
+                        # recurrence
+                        phi_x_t = self.phi_x(x_t)
+                        _, ht = self.RNN(torch.cat([phi_x_t, phi_z_t], 1).unsqueeze(0), h)
+
+                        sample[t] = x_t
+                    
+                    sample_list.append(sample)
+            
+            return sample
+
+        raise RuntimeError('Model needs to be fit')
+
 
     def forward(self, x):
         """
@@ -285,6 +332,7 @@ class ModelRNNVAE(nn.Module):
         # and save intermediate results
         for x_t in x:
             xnext, hnext, zp_t, zx_t, qzx_t, pxz_t = self.step(x_t, ht)
+            #xnext or x_t?
             x_pred.append(xnext)
             qzx.append(qzx_t)
             zx.append(zx_t)
@@ -294,7 +342,8 @@ class ModelRNNVAE(nn.Module):
 
         #Return similar to the mcvae implementation
         return {
-            'x' : x_pred,
+            'x' : x,
+            'xnext': x_pred,
             'qzx': qzx,
             'zx': zx,
             'pxz': pxz,
@@ -312,7 +361,7 @@ class ModelRNNVAE(nn.Module):
         """
         Function that predicts, for a given incomplete sequence,
         future values of that sequence
-        TODO VERY HARD 
+        TODO 
         """
         return 0
 
@@ -327,62 +376,103 @@ class ModelRNNVAE(nn.Module):
         self.optimizer.step()
         return loss.detach().item()
 
-    def fit(self, epochs, data):
+
+    def predict(self, data):
+        """
+        Predict the reconstruction of some input
+        """
+        self.eval()
+        
+        if self.is_fitted:
+            with torch.no_grad():
+                # As always, make sure that the actual 
+                data = Variable(data.squeeze().transpose(0, 1))
+                pred = self.forward(data)
+                return pred
+        
+        raise RuntimeError('Model needs to be fit')
+
+
+    def fit(self, data_train, data_val):
         """
         Optimize full training.
         
-        Copied from the mcvae modules
+        Each epoch, we optimize over the data_train. After optimizing, we train over
+        the 
         """
-        self.train()  # Inherited method which sets self.training = True
 
-        try:  # list of epochs to allow more training
-            so_far = len(self.loss['total'])
-            self.epochs[-1] = so_far
-            self.epochs.append(so_far + epochs)
-        except AttributeError:
-            self.epochs = [0, epochs]
+        for epoch in range(self.epochs):
 
-        for epoch in range(self.epochs[-2], self.epochs[-1]):
-            if type(data) is torch.utils.data.DataLoader:
+            ## TRAINING
+            self.train()  # Inherited method which sets self.training = True
+            if type(data_train) is torch.utils.data.DataLoader:
                 #If we have a data loader
                 ##WE WILL HAVE A DATA LOADER,
                 # MAKE SURE THAT THE FORMAT IS CORRECT
                 current_batch = 0
-                for local_batch in data:
-                    #print("Batch # {} / {}".format(current_batch, len(data) - 1), end='\n')
+                for local_batch in data_train:
                     #happens if the dataset has labels, discard them
                     if type(local_batch) is list:
                         local_batch = local_batch[0]
                     # Study well why this transpose and everything
                     #Will probably be removed when using real data
-                    data = Variable(local_batch.squeeze().transpose(0, 1))
-                    #Adding the loss per batch
-                    loss = self.fit_batch(data)
+                    #Adding the loss per batch      
+                    loss = self.fit_batch(data_train)
         
                     torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm = self.clip)
                     current_batch += 1
-                #TODO: Get the average loss of the whole range and add it to the 
-                # loss list
-                self.average_batch_loss(current_batch)
+
+                self.loss = self.average_batch_loss(current_batch, self.loss)
 
             else:
-                loss = self.fit_batch(data)
+                loss = self.fit_batch(data_train)
             
-
+            # Check loss nan
             if np.isnan(loss):
                 print('Loss is nan!')
                 break
+
+            ##VALIDATION
+            self.eval()  # Inherited method which sets self.training = False
+            with torch.no_grad():
+                if type(data_val) is torch.utils.data.DataLoader:
+                    #If we have a data loader
+                    ##WE WILL HAVE A DATA LOADER,
+                    # MAKE SURE THAT THE FORMAT IS CORRECT
+                    current_batch = 0
+                    for local_batch in data_val:
+                        #happens if the dataset has labels, discard them
+                        if type(local_batch) is list:
+                            local_batch = local_batch[0]
+                        # Study well why this transpose and everything
+                        #Will probably be removed when using real data
+                        #Adding the loss per batch
+                        pred = self.forward(data_val)
+                        loss = self.loss_function(pred)
+
+                        current_batch += 1
+
+                    self.val_loss = self.average_batch_loss(current_batch, self.val_loss)
+
+                else:
+                    pred = self.forward(data_val)
+                    loss = self.loss_function(pred)
+                    self.val_loss = self.save_loss(loss, self.val_loss)
 
             if epoch % self.print_every == 0:
                 #We are not printing the average loss across batches, but 
                 # the loss on the final batch
                 #TODO: print the average loss?
-                self.print_loss(epoch)
+                print('Train loss', end = ' ')
+                self.print_loss(epoch, self.loss)
+                print('Validation loss', end = ' ')
+                self.print_loss(epoch, self.val_loss)
                 if loss_has_diverged(self.loss['total']):
                     print('Loss diverged!')
                     break
 
         self.eval()  # Inherited method which sets self.training = False
+        self.is_fitted = True
 
     def init_KL(self):
         # KL divergence from Pytorch
@@ -404,7 +494,8 @@ class ModelRNNVAE(nn.Module):
         #For each timestep
         for i in range(len(x)):
             # KL divergence
-            kl += self.KL_fn(qzx[i], Normal(0, 1)).sum(1).mean(0)
+            #the second distribution is not the normal, is the prior!!
+            kl += self.KL_fn(qzx[i], zp[i]).sum(1).mean(0)
             ll += pxz[i].log_prob(x[i]).sum(1).mean(0)
 
         total = kl - ll
@@ -416,20 +507,24 @@ class ModelRNNVAE(nn.Module):
         }
 
         if self.training:
-            self.save_loss(losses)
+            self.loss = self.save_loss(losses, self.loss)
             return total
         else:
             return losses
 
     def init_loss(self):
-        empty_loss = {
+        self.loss = {
             'total': [],
             'kl': [],
             'll': []
         }
-        self.loss = empty_loss
+        self.val_loss = {
+            'total': [],
+            'kl': [],
+            'll': []
+        }
 
-    def average_batch_loss(self, nbatches):
+    def average_batch_loss(self, nbatches, loss):
         """
         Remove all teh temporal batches from the loss object
         and add only the average one.
@@ -438,31 +533,54 @@ class ModelRNNVAE(nn.Module):
         """
         #get avg losses
         avg_losses = {
-            'total' : sum(self.loss['total'][-nbatches:]) / nbatches,
-            'kl': sum(self.loss['kl'][-nbatches:]) / nbatches,
-            'll': sum(self.loss['ll'][-nbatches:]) /  nbatches
+            'total' : sum(loss['total'][-nbatches:]) / nbatches,
+            'kl': sum(loss['kl'][-nbatches:]) / nbatches,
+            'll': sum(loss['ll'][-nbatches:]) /  nbatches
         }
 
         #remove nbatches losses
-        for key in self.loss.keys():
-            self.loss[key] = self.loss[key][:-nbatches]
+        for key in loss.keys():
+            loss[key] = loss[key][:-nbatches]
 
         #add avg loss
-        for key in self.loss.keys():
-            self.loss[key].append(float(avg_losses[key]))
+        for key in loss.keys():
+            loss[key].append(float(avg_losses[key]))
+        return loss
 
-
-    def print_loss(self, epoch):
-        print('====> Epoch: {:4d}/{} ({:.0f}%)\tLoss: {:.4f}\tLL: {:.4f}\tKL: {:.4f}\tLL/KL: {:.4f}'.format(
+    def print_loss(self, epoch, loss):
+        print('Epoch: {:4d}/{} ({:.0f}%)\tLoss: {:.4f}\tLL: {:.4f}\tKL: {:.4f}\tLL/KL: {:.4f}'.format(
             epoch,
-            self.epochs[-1],
-            100. * (epoch) / self.epochs[-1],
-            self.loss['total'][-1],
-            self.loss['ll'][-1],
-            self.loss['kl'][-1],
-            self.loss['ll'][-1] / (1e-8 + self.loss['kl'][-1])
+            self.epochs,
+            100. * (epoch) / self.epochs,
+            loss['total'][-1],
+            loss['ll'][-1],
+            loss['kl'][-1],
+            loss['ll'][-1] / (1e-8 + loss['kl'][-1])
         ), end='\n')
 
-    def save_loss(self, losses):
-        for key in self.loss.keys():
-            self.loss[key].append(float(losses[key].detach().item()))
+    def save_loss(self, new_losses, loss):
+        for key in loss.keys():
+            loss[key].append(float(new_losses[key].detach().item()))
+        return loss
+
+    def save(self, out_dir, file_name):
+        """
+        Pickles the model parameters to be retrieved later
+
+        :param file_name: the filename to be saved as,`dload` serves as the download directory
+        :return: None
+        """
+        path = out_dir + '/' + file_name
+        if not os.path.exists(out_dir):
+            os.mkdir(out_dir)
+        torch.save(self.state_dict(), path)
+
+    def load(self, model_path):
+        """
+        Loads the model's parameters from the path mentioned
+
+        :param model_path: Should contain pickle file
+        :return: None
+        """
+        self.is_fitted = True
+        self.load_state_dict(torch.load(model_path))

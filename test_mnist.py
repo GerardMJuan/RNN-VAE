@@ -26,7 +26,7 @@ h_size = 100
 z_dim = 16
 hidden = 16
 n_layers =  1
-n_epochs = 10
+n_epochs = 100
 clip = 10
 learning_rate = 1e-3
 batch_size = 128
@@ -39,9 +39,9 @@ plt.ion()
 dataset_train = datasets.MNIST('data', train=True, download=True,
 		                       transform=transforms.ToTensor())
 
-
 dataset_test = datasets.MNIST('data', train=False, 
 		                      transform=transforms.ToTensor())
+import pdb; pdb.set_trace()
 
 #init model + optimizer + datasets
 train_loader = torch.utils.data.DataLoader(dataset_train,
@@ -54,7 +54,7 @@ test_loader = torch.utils.data.DataLoader(dataset_test,
 model = ModelRNNVAE(x_size, h_size, hidden, n_layers, 
                      hidden, n_layers, hidden,
                      n_layers, z_dim, hidden, n_layers,
-                     clip)
+                     clip, batch_size)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
