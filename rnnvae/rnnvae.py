@@ -29,16 +29,6 @@ from torch.autograd import Variable
 from torch.distributions import Normal, kl_divergence
 import os
 
-## Decidint on device on device.
-DEVICE_ID = 0
-DEVICE = torch.device('cuda:' + str(DEVICE_ID) if torch.cuda.is_available() else 'cpu')
-if torch.cuda.is_available():
-    torch.cuda.set_device(DEVICE_ID)
-
-#Constants
-pi = torch.FloatTensor([np.pi]).to(DEVICE)  # torch.Size([1])
-log_2pi = torch.log(2 * pi)
-
 # Functions
 def compute_log_alpha(mu, logvar):
     # clamp because dropout rate p in 0-99%, where p = alpha/(alpha+1)
@@ -105,13 +95,13 @@ class VariationalBlock(nn.Module):
     receiving an input and the forward pass generating a Normal distribution.
     """
 
-    def __init__(self, input_size, hidden_size, latent_size, n_layers):
+    def __init__(self, input_size, hidden_size, latent_size, n_layers, sigmoid_mean=False):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.latent_size = latent_size
         self.n_layers = n_layers
-
+        self.sigmoid_mean = sigmoid_mean
         #Define module list
         self.init_block()
 
@@ -125,11 +115,16 @@ class VariationalBlock(nn.Module):
             self.input_size = self.hidden_size
 
         #TODO: MU COULD BE USING A SIGMOID FOR THE OUTPUT
-        #TODO: LOGVAR COULD BE USING A SOFTPLUS
-        self.to_mu = nn.Linear(self.input_size, self.latent_size)
+        if self.sigmoid_mean:
+            self.to_mu = nn.Sequential(
+                nn.Linear(self.input_size, self.latent_size),
+                nn.Sigmoid()) 
+        else:
+            self.to_mu = nn.Linear(self.input_size, self.latent_size)
+        
         self.to_logvar = nn.Sequential(
-            nn.Linear(self.input_size, self.latent_size),
-            nn.Softplus())
+            nn.Linear(self.input_size, self.latent_size))   
+            # nn.Softplus())
         #Last layers, to obtain from the same tal both outputs  
 
 
@@ -168,19 +163,13 @@ class ModelRNNVAE(nn.Module):
 
     def __init__(self, x_size, h_size, phi_x_hidden, phi_x_n, 
                  phi_z_hidden, phi_z_n, enc_hidden,
-                 enc_n, latent, dec_hidden, dec_n, clip, nepochs, batch_size, cuda=True,
-                 print_every=1):
+                 enc_n, latent, dec_hidden, dec_n, clip, nepochs, batch_size, device,
+                 print_every=100):
 
         super().__init__()
 
         self.dtype = torch.FloatTensor
-        self.use_cuda = cuda
-
-        if not torch.cuda.is_available() and self.use_cuda:
-            self.use_cuda = False
-
-        if self.use_cuda:
-            self.dtype = torch.cuda.FloatTensor
+        self.device = device
 
         #Parameters
         self.x_size = x_size
@@ -201,6 +190,8 @@ class ModelRNNVAE(nn.Module):
         self.batch_size = batch_size # we only use  this for loss visualization
         self.epochs = nepochs
 
+        self.sampling=False
+
         # Building blocks
         ## PRIOR 
         self.prior  = VariationalBlock(self.h_size, self.enc_hidden, self.latent, self.enc_n)
@@ -211,7 +202,7 @@ class ModelRNNVAE(nn.Module):
 
         ### DECODER
         self.phi_z = PhiBlock(self.latent, self.phi_z_hidden, self.phi_z_n)
-        self.decoder = VariationalBlock(self.phi_z_hidden + self.h_size, self.dec_hidden, self.x_size, self.dec_n)
+        self.decoder = VariationalBlock(self.phi_z_hidden + self.h_size, self.dec_hidden, self.x_size, self.dec_n, sigmoid_mean=False)
 
         ### RNN 
         # TODO, ADD MORE OPTIONS, ATM ONLY GRU
@@ -229,11 +220,38 @@ class ModelRNNVAE(nn.Module):
         sampling by leveraging on the reparametrization trick
         """
 
-        if self.training:
+        if self.training or self.sampling:
                 zx = qzx.rsample()
         else:
             zx = qzx.loc
         return zx
+
+    def step_sample(self, ht):
+        """
+        Does a single recurrent step, 
+        but using sampling from the prior.
+        
+        We do not have any x.
+        """
+        # Sampling from the prior
+        z_prior = self.prior(ht[-1])
+        # test this
+        z_t = self.sample_from(z_prior)
+        # z_t = z_prior.rsample() #Hard sampling because we want variation
+
+        # Apply phi_z
+        phi_z_t = self.phi_z(z_t)
+
+        # decoder
+        dec_t = self.decoder(torch.cat([phi_z_t, ht[-1]], 1))
+        x_t = self.sample_from(dec_t)
+
+        # recurrence
+        phi_x_t = self.phi_x(x_t)
+        _, ht = self.RNN(torch.cat([phi_x_t, phi_z_t], 1).unsqueeze(0), ht)
+
+        return x_t, ht, z_prior, z_t, dec_t
+
 
     def step(self, xt, ht):
         """
@@ -262,7 +280,8 @@ class ModelRNNVAE(nn.Module):
         pxz_t = self.decoder(x)
 
         #Sample from
-        xnext = self.sample_from(pxz_t)
+        # xnext = self.sample_from(pxz_t)
+        xnext = pxz_t.loc
 
         ### RNN
         x = torch.cat([phi_zx_t, x_phi],1).unsqueeze(0)
@@ -276,39 +295,31 @@ class ModelRNNVAE(nn.Module):
         nsamples: number of generated samples
         nt: number of timepoints
         
-        returns a numpy object of X x X x X (NYI), with 
+        returns alist of nsamples of size (nt x nfeat)
         """
         self.eval()
-        sample_list = []
+        x_pred = []
+        z = []
+        pxz = []
+        zp = []
 
         if self.is_fitted:
             with torch.no_grad():
-                # Sample from latent z a number of times
-                # for each sample
-                for n in range(nsamples):
-                    sample = torch.zeros(nt, self.x_dim)
-                    h = Variable(torch.zeros(self.n_layers, 1, self.h_dim))
-                    for t in range(nt):
-                        # Sampling from the prior
-                        z_prior = self.prior(ht[-1])
-                        z_t = z_prior.rsample() #Hard sampling because we want variation
-
-                        # Apply phi_z
-                        phi_z_t = self.phi_z(z_t)
-
-                        # decoder
-                        dec_t = self.decoder(torch.cat([phi_z_t, h[-1]], 1))
-                        x_t = self.sample_from(dec_t)
-
-                        # recurrence
-                        phi_x_t = self.phi_x(x_t)
-                        _, ht = self.RNN(torch.cat([phi_x_t, phi_z_t], 1).unsqueeze(0), h)
-
-                        sample[t] = x_t
-                    
-                    sample_list.append(sample)
+                #dim0 is the nrecurrentlayers, dim1 is the size of x (we are generating one by one) 
+                ht = Variable(torch.zeros(1, nsamples, self.h_size, device=self.device))
+                for t in range(nt):
+                    x_t, ht, z_prior, z_t, dec_t = self.step_sample(ht)
+                    x_pred.append(x_t.cpu().detach().numpy())
+                    z.append(z_t.cpu().detach().numpy())
+                    pxz.append(dec_t)
+                    zp.append(z_prior)
             
-            return sample
+            return {
+            'xnext' : x_pred,
+            'z': z,
+            'pxz': pxz,
+            'zp': zp
+            }
 
         raise RuntimeError('Model needs to be fit')
 
@@ -318,11 +329,9 @@ class ModelRNNVAE(nn.Module):
         Forward propagation of the network,
         passing over the full network for every 
         step of the sequence
-        TODO: DEBUG VERY WELL FOR DIMENSIONALITIES
-        OF THE VARIOUS SEQUENCES
         """
         # Initial h0
-        ht = Variable(torch.zeros(1, x.size(1), self.h_size))
+        ht = Variable(torch.zeros(1, x.size(1), self.h_size, device=self.device))
         x_pred = []
         qzx = []
         zx = []
@@ -345,25 +354,59 @@ class ModelRNNVAE(nn.Module):
             'x' : x,
             'xnext': x_pred,
             'qzx': qzx,
-            'zx': zx,
+            'z': zx,
             'pxz': pxz,
             'zp': zp
         }
-    
-    def reconstruct(self):
-        """
-        Function that will reconstruct a set of sequences
-        TODO
-        """
-        return 0
 
-    def sequence_predict(self, x):
+    def sequence_predict(self, x, nt):
         """
-        Function that predicts, for a given incomplete sequence,
-        future values of that sequence
-        TODO 
+        Function that predicts, for a given incomplete sequence x,
+        return future values for that specific value, over nt timepoints
+
+        We assume that, at least, 
         """
-        return 0
+        self.eval()
+        if self.is_fitted:
+            with torch.no_grad():
+                #initalize ht
+                ht = Variable(torch.zeros(1, x.size(1), self.h_size, device=self.device))
+                #initialize returns
+                x_pred = []
+                z = []
+                pxz = []
+                zp = []
+
+                for t in range(nt):
+                    # If we have x information, we do a normal forward pass    
+                    if t < len(x):
+                        x_t = x[t]
+                        xnext, hnext, zp_t, z_t, _, pxz_t = self.step(x_t, ht)
+                        x_pred.append(x_t)
+                    # if not, we do a sampling from the corresponding prior
+                    else:
+                        xnext, hnext, zp_t, z_t, pxz_t = self.step_sample(ht)
+                        x_pred.append(xnext)
+                    # set the next x (if we have it or not)
+                    z.append(z_t)
+                    pxz.append(pxz_t)
+                    zp.append(zp_t)
+                    ht = hnext
+                
+                seq_pred = {
+                    'xnext': x_pred,
+                    'z': z,
+                    'pxz': pxz,
+                    'zp': zp
+                }
+
+                # Convert to numpy the xnext and the zx values
+                seq_pred['xnext'] = np.array([x.cpu().detach().numpy() for x in seq_pred["xnext"]])
+                seq_pred['z'] = np.array([x.cpu().detach().numpy() for x in seq_pred["z"]])
+                # self.sampling=False
+                return seq_pred
+        raise RuntimeError('Model needs to be fit')
+
 
     def fit_batch(self, x_batch):
         """
@@ -379,15 +422,18 @@ class ModelRNNVAE(nn.Module):
 
     def predict(self, data):
         """
-        Predict the reconstruction of some input
+        Predict the reconstruction of some input.
+        We are predicting the exact reconstuction, and its latent space
         """
         self.eval()
         
         if self.is_fitted:
             with torch.no_grad():
-                # As always, make sure that the actual 
-                data = Variable(data.squeeze().transpose(0, 1))
                 pred = self.forward(data)
+
+                # Convert to numpy the xnext and the zx values
+                pred['xnext'] = np.array([x.cpu().detach().numpy() for x in pred["xnext"]])
+                pred['z'] = np.array([x.cpu().detach().numpy() for x in pred["z"]])
                 return pred
         
         raise RuntimeError('Model needs to be fit')
@@ -491,7 +537,6 @@ class ModelRNNVAE(nn.Module):
         kl = 0
         ll = 0
 
-        #For each timestep
         for i in range(len(x)):
             # KL divergence
             #the second distribution is not the normal, is the prior!!

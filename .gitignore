@@ -133,3 +133,8 @@ data/*
 
 # experiments folder
 experiments/*
+
+#LOGS folder
+LOGS/
+
+env.sh
