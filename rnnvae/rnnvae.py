@@ -258,168 +258,73 @@ class MCRNNVAE(nn.Module):
 
 
 
-	def sample_from(self, qzx):
+    def sample_from(self, qzx):
 
-		'''
-		sampling by leveraging on the reparametrization trick
-		'''
-
-		zx = []
-
-		for ch in range(self.n_channels):
-			if self.training:
-				zx.append(
-					qzx[ch].rsample()
-				)
-			else:
-				zx.append(
-					qzx[ch].loc
-				)
-		return zx
-
-    def step_sample(self, ht_list):
-        """
-        Does a single recurrent step, 
-        but using sampling from the prior.
-        
-        ht_list is a list of hidden states, as long as n_channels
-
-        We do not have any x here.
-        """
-        #We store the results here, for each channel
-        x_t_list = []
-        ht_list = []
-        z_prior_list = []
-        z_t_list = []
-        dec_t_list = []
-
-        for ch in range(self.n_channels):
-            # Sampling from the prior
-            ht = ht_list[ch]
-            z_prior = self.ch_priors[ch](ht[-1])
-
-            # test this
-            z_t = self.sample_from(z_prior)
-            # z_t = z_prior.rsample() #Hard sampling because we want variation
-
-            # Apply phi_z
-            phi_z_t = self.ch_phi_z[ch](z_t)
-
-            # decoder
-            #THIS NEEDS TO BE CHANGED IN SOME WAY
-            x = torch.cat([phi_z_t, ht[-1]], 1)
-            dec_t_list.append([])
-            x_t_list.append([])
-            for j in range(self.channels):
-                ### DECODER
-                # Decode from each different channel
-                pxz_t = self.ch_dec[j](x)
-                xnext = self.sample_from(pxz_t)
-                dec_t_list[ch].append(pxz_t)
-                x_t_list[ch].append(xnext)
-
-            # recurrence
-            phi_x_t = self.ch_phi_x[ch](x_t)
-            _, ht = self.ch_RNN[ch](torch.cat([phi_x_t, phi_z_t], 1).unsqueeze(0), ht)
-            
-            #Save the results
-            ht_list.append(ht)
-            z_prior_list.append(z_prior)
-            z_t_list.append(z_t)
-        
-        return x_t_list, ht_list, z_prior_list, z_t_list, dec_t_list
+        '''
+        sampling by leveraging on the reparametrization trick
+        '''
+        if self.training:
+            zx = qzx.rsample()
+        else:
+            zx = qzx.loc
+        return zx
 
 
-    def step(self, xt_list, ht_list):
+    def step(self, xt_list, ht_list, sample=False, av_ch=None):
         """
         Function that implements the forward pass 
         of a single recurrent step
         """
+        av_ch = range(self.n_channels) if av_ch is None else av_ch
         hnext_list = []
         z_prior_list = []
         zx_t_list = []
         qzx_t_list = []
         pxz_t_list = []
-        xnext_list = []
 
         for ch in range(self.n_channels):
-            xt = xt_list[ch]
             ht = ht_list[ch]
-            ###PRIOR
-            z_prior = self.ch_priors[ch](ht[-1])
-
-            ##### ENCODER
-            x_phi = self.ch_phi_x[ch](xt)
-            # Append both inputs
-            x = torch.cat([x_phi, ht[-1]], 1)
-
-            # Run through the encoder
-            qzx_t = self.ch_enc[ch](x)
+            z_prior = self.ch_priors[ch](ht[-1]) # get the prior from the hidden state
             
-            #Sample from
-            zx_t = self.sample_from(qzx_t)
+            if not sample:
+                #If we are not sampling from the prior, we have an input value
+                xt = xt_list[ch]
+                x_phi = self.ch_phi_x[ch](xt) # Input transformation
+                x = torch.cat([x_phi, ht[-1]], 1) # append input with hidden
+                qzx_t = self.ch_enc[ch](x) # Run through the encoder
+                z_t = self.sample_from(qzx_t) #Sample from q(z|x)
+
+            else:
+                #Sample from the prior    
+                z_t = self.sample_from(z_prior) #sample from the prior
 
             #Apply phi_z
-            phi_zx_t = self.ch_phi_z[0](zx_t)
+            phi_zx_t = self.ch_phi_z[ch](z_t)
 
             #Decoder, for each separate channel
             x = torch.cat([phi_zx_t, ht[-1]], 1)
             pxz_t_list.append([])
-            xnext_list.append([])
-            for j in range(self.channels):
-                ### DECODER
-                # Decode from each different channel
-                pxz_t = self.ch_dec[j](x)
-                xnext = pxz_t.loc
+    
+            for j in range(self.n_channels):
+                pxz_t = self.ch_dec[j](x)  # Decode from each different channel
                 pxz_t_list[ch].append(pxz_t)
-                xnext_list[ch].append(xnext)
 
-            ### RNN
+            if sample:
+                #If we are sampling, we need to obtain x_hat from the decoder
+                x_hat = torch.stack(pxz_t_list[e][ch].loc for e in av_ch).mean(0)
+                x_phi = self.ch_phi_x[ch](x_hat)
+            
             x = torch.cat([phi_zx_t, x_phi],1).unsqueeze(0)
-            _, hnext = self.ch_RNN[ch](x, ht)
+            _, hnext = self.ch_RNN[ch](x, ht) #Recurrence step
 
+            #Save results
             hnext_list.append(hnext)
             z_prior_list.append(z_prior)
-            zx_t_list.append(zx_t)
+            zx_t_list.append(z_t)
             qzx_t_list.append(qzx_t)
         
-        return xnext_list, hnext_list, z_prior_list, zx_t_list, qzx_t_list, pxz_t_list
-
-    def sample_latent(self, nsamples, nt):
-        """
-        Sample a number of samples from a trained latent space
-        nsamples: number of generated samples
-        nt: number of timepoints
-        
-        returns a list of nsamples of size (nch x nt x nfeat)
-        """
-        self.eval()
-        x_pred = []
-        z = []
-        pxz = []
-        zp = []
-
-        if self.is_fitted:
-            with torch.no_grad():
-                #dim0 is the nrecurrentlayers, dim1 is the size of x (we are generating one by one) 
-                ht = [Variable(torch.zeros(1, nsamples, self.h_size, device=self.device)) for i in range(self.n_channels)]
-                for t in range(nt):
-                    x_t, ht, z_prior, z_t, dec_t = self.step_sample(ht)
-                    # Get mean across channels
-                    x_pred.append([[x2.cpu().detach().numpy() for x2 in x] for x in x_t])
-                    z.append([z.cpu().detach().numpy() for z in z_t])
-                    pxz.append(dec_t)
-                    zp.append(z_prior)
-            
-            return {
-            'xnext' : x_pred,
-            'z': z,
-            'pxz': pxz,
-            'zp': zp
-            }
-
-        raise RuntimeError('Model needs to be fit')
-
+        # Return xt_list, in the not sampling case, this does nothing, in the other case, returns the reconstructed x
+        return hnext_list, z_prior_list, zx_t_list, qzx_t_list, pxz_t_list
 
     def forward(self, x):
         """
@@ -427,90 +332,42 @@ class MCRNNVAE(nn.Module):
         passing over the full network for every 
         step of the sequence
 
-        So, data shape should be 
-        (nt, nch, nbatch, feat)
+        So, data shape should is a list of the channels, each list a tensor
+        input is
+        (nch nt nbatch nfeat)
+        output should also be that
+        (n_ch nt, nbatch, feat)
         """
         # Initial h0
-        ht = [Variable(torch.zeros(1, x.size(1), self.h_size, device=self.device)) for i in range(self.n_channels)]
-        x_pred = []
-        qzx = []
-        zx = []
-        pxz = []
-        zp = []
-        # ITERATE OVER THE SEQUENCE
-        # and save intermediate results
-        for x_t in x:
-            xnext, hnext, zp_t, zx_t, qzx_t, pxz_t = self.step(x_t, ht)
-            #xnext or x_t?
-            x_pred.append(xnext)
-            qzx.append(qzx_t)
-            zx.append(zx_t)
-            pxz.append(pxz_t)
-            zp.append(zp_t)
+        #all channels have same number of samples, so x[0].size(1) can be hardcoded
+        ht = [Variable(torch.zeros(1, x[0].size(1), self.h_size, device=self.device)) for _ in range(self.n_channels)]
+        #Initialize output as number of channels
+        qzx = [[] for _ in range(self.n_channels)]
+        zx = [[] for _ in range(self.n_channels)]
+        pxz = [[] for _ in range(self.n_channels)]
+        zp = [[] for _ in range(self.n_channels)]
+        # ITERATE OVER THE SEQUENCE, at each time point
+        for tp in range(x[0].size(0)):
+            #Need to repopulate the list so that it contains a single time point, still being a list
+            #of teh 
+            x_t = [x_ch[tp, :, :] for x_ch in x]
+            hnext, zp_t, zx_t, qzx_t, pxz_t = self.step(x_t, ht)
+            # recover the initial shape (nch, nt, nbatch, nfeat)
+            # bit convoluted really
+            for i in range(self.n_channels):
+                #this xnext needs to be averaged across all the values, as it is reocnstructed from all channels
+                zx[i].append(zx_t[i])
+                pxz[i].append(pxz_t[i])
+                zp[i].append(zp_t[i])
             ht = hnext
-
         #Return similar to the mcvae implementation
         return {
             'x' : x,
-            'xnext': x_pred,
             'qzx': qzx,
             'z': zx,
             'pxz': pxz,
             'zp': zp
         }
-
-    def sequence_predict(self, x, nt):
-        """
-        Function that predicts, for a given incomplete sequence x,
-        return future values for that specific value, over nt timepoints
-
-        We assume that all channels have the same amount of time points and
-        they correspond to each other
-
-        x has shape (nt, nch, nbatch, nfeat)
-        """
-        self.eval()
-        if self.is_fitted:
-            with torch.no_grad():
-                #initalize ht
-                ht = [Variable(torch.zeros(1, x.size(1), self.h_size, device=self.device)) for i in range(self.n_channels)]
-                #initialize returns
-                x_pred = []
-                z = []
-                pxz = []
-                zp = []
-
-                #For each timepoint
-                for t in range(nt):
-                    # If we have x information, we do a normal forward pass    
-                    if t < len(x):
-                        x_t = x[t]
-                        xnext, hnext, zp_t, z_t, _, pxz_t = self.step(x_t, ht)
-                        x_pred.append([[x2.cpu().detach().numpy() for x2 in x] for x in x_t])
-                    # if not, we do a sampling from the corresponding prior
-                    else:
-                        xnext, hnext, zp_t, z_t, pxz_t = self.step_sample(ht)
-                        x_pred.append([[x2.cpu().detach().numpy() for x2 in x] for x in xnext])
-                    # set the next x (if we have it or not)
-                    z.append(z_t)
-                    pxz.append(pxz_t)
-                    zp.append(zp_t)
-                    ht = hnext
-                
-                seq_pred = {
-                    'xnext': x_pred,
-                    'z': z,
-                    'pxz': pxz,
-                    'zp': zp
-                }
-
-                # Convert to numpy the xnext and the zx values
-                # it is a double loop, for each time point and each channel (not sure is really efficient)
-                seq_pred['z'] = np.array([[x2.cpu().detach().numpy() for x2 in x] for x in seq_pred["z"]])
-                return seq_pred
-
-        raise RuntimeError('Model needs to be fit')
-
 
     def fit_batch(self, x_batch):
         """
@@ -524,48 +381,58 @@ class MCRNNVAE(nn.Module):
         return loss.detach().item()
 
 
-    def predict(self, data):
+    def predict(self, data, nt, av_ch=None):
         """
         Predict the reconstruction of some input.
+        av_ch is the channels that we will be using for reconstruction. If its None, we just use all of them
         We are predicting the exact reconstuction, and its latent space
         """
         self.eval()
-        
+        av_ch = range(self.n_channels) if av_ch is None else av_ch
+
         if self.is_fitted:
             with torch.no_grad():
-                pred = self.forward(data)
+                # initalize ht
+                # all channels have same number of samples, so x[0].size(1) can be hardcoded
+                ht = [Variable(torch.zeros(1, data[0].size(1), self.h_size, device=self.device)) for _ in range(self.n_channels)]
+                # initialize returns
+                z = [[] for _ in range(self.n_channels)]
+                pxz = [[] for _ in range(self.n_channels)]
+                zp = [[] for _ in range(self.n_channels)]
 
-                # Convert to numpy the xnext and the zx values
-                pred['xnext'] = np.array([[x2.cpu().detach().numpy() for x2 in x] for x in pred["xnext"]])
-                pred['z'] = np.array([[x2.cpu().detach().numpy() for x2 in x] for x in pred["z"]])
+                #For each timepoint
+                for tp in range(data[0].size(0)):
+                    #Need to repopulate the list so that it contains a single time point, still being a list
+                    #of teh 
+                    x_t = [x_ch[tp, :, :] for x_ch in data]
+                    # If we have x information, we do a normal step
+                    hnext, zp_t, z_t, _, pxz_t = self.step(x_t, ht, tp >= len(x_t), av_ch)
+
+                    for i in range(self.n_channels):
+                        #this xnext needs to be averaged across all the values, as it is reocnstructed from all channels
+                        z[i].append(z_t[i])
+                        pxz[i].append(pxz_t[i])
+                        zp[i].append(zp_t[i])
+                    ht = hnext
+
+                # For xnext, we need to obtain the average of the reconstruction across channels and timepoints
+                X_hat = [[] for _ in range(self.n_channels)]
+                for i in range(self.n_channels):
+                    for t in range(data[0].size(0)):
+                        xhat = torch.stack([pxz[ch][t][i].loc.cpu().detach() for ch in av_ch]).mean(0)
+                        X_hat[i].append(xhat.numpy())
+
+                z = np.array([[x2.cpu().detach().numpy() for x2 in x] for x in z])
+
+                pred = {
+                    'xnext': X_hat,
+                    'z': z,
+                    'pxz': pxz,
+                    'zp': zp
+                }
                 return pred
         
         raise RuntimeError('Model needs to be fit')
-
-    def reconstruct(self, x, nt, reconstruct_from=None):
-        """
-        Reconstruct the other channels from available channels.
-
-        We use the channels indicated in reconstruct_from to use the data from x to reconstruct
-        for nt times.
-
-        Return a list of nt elements, each element is a list of ch elements, etc etc
-        """
-		available_channels = range(self.n_channels) if reconstruct_from is None else reconstruct_from
-		fwd_return = self.forward(x)
-		pxz = fwd_return['pxz']
-
-		Xhat = []
-        for t in range(nt):
-            Xhat.append([])
-            for c in range(self.n_channels):
-                # mean along the stacking direction
-                xhat = torch.stack([pxz[e][c].loc.cpu().detach() for e in available_channels]).mean(0)
-                Xhat[t].append(xhat.numpy())
-                del xhat
-
-		return Xhat
-
 
     def fit(self, data_train, data_val):
         """
@@ -663,25 +530,24 @@ class MCRNNVAE(nn.Module):
         This is a multi-channel loss: we compute all the losses
         across the different channels.
         """
-        x = fwd_return['x']
+        X = fwd_return['x']
         qzx = fwd_return['qzx']
         pxz = fwd_return['pxz']
         zp = fwd_return['zp']
         kl = 0
         ll = 0
 
-
         # For each time point,
-        for t in range(len(x)):
-
+        for t in range(X[0].size(0)):
+            x = [x_ch[t, :, :] for x_ch in X]
             for i in range(self.n_channels):
                 # KL divergence
                 #the second distribution is not the normal, is the prior!!
-                kl += self.KL_fn(qzx[t][i], zp[t][i]).sum(1).mean(0)
+                kl += self.KL_fn(qzx[i][t], zp[i][t]).sum(1).mean(0)
                 for j in range(self.n_channels):
                     # i = latent comp; j = decoder
                     # Direct (i=j) and Crossed (i!=j) Log-Likelihood
-                    ll += pxz[t][i][j].log_prob(x[t][j]).sum(1).mean(0)
+                    ll += pxz[i][t][j].log_prob(x[j]).sum(1).mean(0)
 
         total = kl - ll
 

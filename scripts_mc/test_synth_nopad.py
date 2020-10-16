@@ -51,6 +51,9 @@ def run_experiment(p, out_dir):
     if torch.cuda.is_available():
         torch.cuda.set_device(DEVICE_ID)
 
+    #Tensors should have the shape
+    # [ntp n_ch, n_batch, n_feat]
+    #as n_feat can be different across channels, ntp and n_ch need to be lists. n_batch and n_feat are the tensors
     X_train_tensor = []
     X_test_tensor = []
     #generate the data
@@ -58,18 +61,20 @@ def run_experiment(p, out_dir):
         gen_model = SinDataGenerator(ch_curves, p["ntp"], p["noise"])
         samples = gen_model.generate_n_samples(p["nsamples"])
         X_train = np.asarray([y for (_,y) in samples])
-        X_train_tensor.append(torch.FloatTensor(X_train).permute((1,0,2)))
+        X_train_tensor.append(torch.FloatTensor(X_train).permute((1,0,2)).to(DEVICE))
 
         samples = gen_model.generate_n_samples(int(p["nsamples"]*0.8))
         X_test = np.asarray([y for (_,y) in samples])
-        X_test_tensor.append(torch.FloatTensor(X_test).permute((1,0,2)))
+        X_test_tensor.append(torch.FloatTensor(X_test).permute((1,0,2)).to(DEVICE))
     
-    X_train_tensor = torch.FloatTensor(X_train_tensor)
-    X_test_tensor = torch.FloatTensor(X_test_tensor)
+    #Stack along first dimension
+    #cant do that bc last dimension (features) could be different length
+    # X_train_tensor = torch.stack(X_train_tensor, dim=0)
+    #X_test_tensor = torch.stack(X_test_tensor, dim=0)
 
     #Prepare model
     # Define model and optimizer
-    model = rnnvae.MCRNNVAE(p["x_size"], p["h_size"], p["hidden"], p["n_layers"], 
+    model = rnnvae.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
                             p["hidden"], p["n_layers"], p["hidden"],
                             p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
                             p["clip"], p["n_epochs"], p["batch_size"], 
@@ -80,17 +85,18 @@ def run_experiment(p, out_dir):
 
     model = model.to(DEVICE)
     # Fit the model
-    model.fit(X_train_tensor.to(DEVICE), X_test_tensor.to(DEVICE))
+    model.fit(X_train_tensor, X_test_tensor)
 
     ### After training, save the model!
     model.save(out_dir, 'model.pt')
 
-    """
-    DEBUG THIS SHIT BIT BY BIT AFTER CONVERGENCE
-    # Predict the reconstructions from X_val and X_train
-    X_test_fwd = model.predict(X_test_tensor.to(DEVICE))
-    X_train_fwd = model.predict(X_train_tensor.to(DEVICE))
 
+    # Predict the reconstructions from X_val and X_train
+    X_test_fwd = model.predict(X_test_tensor)
+    X_train_fwd = model.predict(X_train_tensor)
+    import pdb; pdb.set_trace()
+    
+    """
     #Reformulate things
     X_train_fwd['xnext'] = np.array(X_train_fwd['xnext']).swapaxes(0,1)
     X_train_fwd['z'] = np.array(X_train_fwd['z']).swapaxes(0,1)
@@ -101,7 +107,10 @@ def run_experiment(p, out_dir):
     X_train_hat = X_train_fwd["xnext"]
 
     # Unpad using the masks
-    #after masking, need to rehsape to (nt, nfeat)
+    #plot validation and 
+    plot_total_loss(model.loss['total'], model.val_loss['total'], "Total loss", out_dir, "total_loss.png")
+    plot_total_loss(model.loss['kl'], model.val_loss['kl'], "kl_loss", out_dir, "kl_loss.png")
+    plot_total_loss(model.loss['ll'], model.val_loss['ll'], "ll_loss", out_dir, "ll_loss.png") #Negative to see downard curve
 
     #Compute mean absolute error over all sequences
     mse_train = np.mean([mean_absolute_error(xval, xhat) for (xval, xhat) in zip(X_train, X_train_hat)])
@@ -110,23 +119,6 @@ def run_experiment(p, out_dir):
     #Compute mean absolute error over all sequences
     mse_test = np.mean([mean_absolute_error(xval, xhat) for (xval, xhat) in zip(X_test, X_test_hat)])
     print('MSE over the test set: ' + str(mse_test))
-
-    #plot validation and 
-    plot_total_loss(model.loss['total'], model.val_loss['total'], "Total loss", out_dir, "total_loss.png")
-    plot_total_loss(model.loss['kl'], model.val_loss['kl'], "kl_loss", out_dir, "kl_loss.png")
-    plot_total_loss(model.loss['ll'], model.val_loss['ll'], "ll_loss", out_dir, "ll_loss.png") #Negative to see downard curve
-
-    # Visualization of trajectories
-    subj = 6
-    feature = 0
-    # For train
-    plot_trajectory(X_train, X_train_hat, subj, 'all', out_dir, f'traj_train_s_{subj}_f_all') # testing for a given subject
-    plot_trajectory(X_train, X_train_hat, subj, feature, out_dir, f'traj_train_s_{subj}_f_{feature}') # testing for a given feature
-
-    # For test
-    plot_trajectory(X_test, X_test_hat, subj, 'all', out_dir, f'traj_test_s_{subj}_f_all') # testing for a given subject
-    plot_trajectory(X_test, X_test_hat, subj, feature, out_dir, f'traj_test_s_{subj}_f_{feature}') # testing for a given feature
-    
     
     z_train = X_train_fwd['z']
     z_test = X_test_fwd['z']
@@ -194,7 +186,8 @@ if __name__ == "__main__":
         ("sigmoid", {"L": 1, "k": 5, "x0": 5})]
         ]
     
-    names = ["c1", "c2"]
+    names = {"1": "c1", 
+             "2":"c2"}
 
     ### Parameter definition
     params = {
@@ -202,7 +195,7 @@ if __name__ == "__main__":
         "z_dim": 5,
         "hidden": 20,
         "n_layers": 1,
-        "n_epochs": 2000,
+        "n_epochs": 500,
         "clip": 10,
         "learning_rate": 1e-3,
         "batch_size": 128,
