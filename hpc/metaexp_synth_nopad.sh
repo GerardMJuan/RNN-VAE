@@ -17,4 +17,4 @@ module --ignore-cache load CUDA/10.2.89
 module --ignore-cache load cuDNN/7.6.5.32-CUDA-10.2.89
 source /homedtic/gmarti/pytorch/bin/activate 
 
-python scripts/metaexp_synth_nopad.py
+python scripts_mc/metaexp_synth_nopad.py

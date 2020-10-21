@@ -32,6 +32,19 @@ from torch.distributions import Normal, kl_divergence
 import os
 
 # Functions
+def reconstruction_error(predicted, target):
+	#Full reconstruction error.
+	# sum over data dimensions (n_feats); average over observations (N_obs)
+	return ((target - predicted) ** 2).sum(1).mean(0)  # torch.Size([1])
+
+
+def mae(predicted, target):
+	"""
+	Mean Absolute Error
+	"""
+	# sum over data dimensions (n_feats); average over observations (N_obs)
+	return torch.abs(target - predicted).sum(1).mean(0)  # torch.Size([1])
+
 def compute_log_alpha(mu, logvar):
     # clamp because dropout rate p in 0-99%, where p = alpha/(alpha+1)
     return (logvar - torch.log(mu.pow(2) + 1e-8)).clamp(min=-8, max=8)
@@ -282,6 +295,8 @@ class MCRNNVAE(nn.Module):
         qzx_t_list = []
         pxz_t_list = []
 
+        phi_zx_list = []
+        # First part: get all the decoders
         for ch in range(self.n_channels):
             ht = ht_list[ch]
             z_prior = self.ch_priors[ch](ht[-1]) # get the prior from the hidden state
@@ -293,6 +308,7 @@ class MCRNNVAE(nn.Module):
                 x = torch.cat([x_phi, ht[-1]], 1) # append input with hidden
                 qzx_t = self.ch_enc[ch](x) # Run through the encoder
                 z_t = self.sample_from(qzx_t) #Sample from q(z|x)
+                qzx_t_list.append(qzx_t)
 
             else:
                 #Sample from the prior    
@@ -300,6 +316,7 @@ class MCRNNVAE(nn.Module):
 
             #Apply phi_z
             phi_zx_t = self.ch_phi_z[ch](z_t)
+            phi_zx_list.append(phi_zx_t)  # In the sampling moment, it is necessary
 
             #Decoder, for each separate channel
             x = torch.cat([phi_zx_t, ht[-1]], 1)
@@ -309,20 +326,31 @@ class MCRNNVAE(nn.Module):
                 pxz_t = self.ch_dec[j](x)  # Decode from each different channel
                 pxz_t_list[ch].append(pxz_t)
 
-            if sample:
-                #If we are sampling, we need to obtain x_hat from the decoder
-                x_hat = torch.stack(pxz_t_list[e][ch].loc for e in av_ch).mean(0)
-                x_phi = self.ch_phi_x[ch](x_hat)
-            
-            x = torch.cat([phi_zx_t, x_phi],1).unsqueeze(0)
-            _, hnext = self.ch_RNN[ch](x, ht) #Recurrence step
-
-            #Save results
-            hnext_list.append(hnext)
             z_prior_list.append(z_prior)
             zx_t_list.append(z_t)
-            qzx_t_list.append(qzx_t)
-        
+
+            if not sample:
+                x = torch.cat([phi_zx_t, x_phi],1).unsqueeze(0)
+                _, hnext = self.ch_RNN[ch](x, ht) # Recurrence step
+
+                #Save results
+                hnext_list.append(hnext)
+
+        # Second part: generate the samples if needed, we needed to generate
+        # all the p_xz 
+        if sample:
+            for ch in range(self.n_channels):
+                #If we are sampling, we need to obtain x_hat from the decoder
+                x_hat = torch.stack([pxz_t_list[e][ch].loc for e in av_ch]).mean(0)
+                x_phi = self.ch_phi_x[ch](x_hat)
+
+                x = torch.cat([phi_zx_list[ch], x_phi],1).unsqueeze(0)
+                _, hnext = self.ch_RNN[ch](x, ht) # Recurrence step
+
+                #Save results
+                hnext_list.append(hnext)
+                qzx_t_list.append(None) #To solve mistakes, but not used in sampling (no decoder!)
+
         # Return xt_list, in the not sampling case, this does nothing, in the other case, returns the reconstructed x
         return hnext_list, z_prior_list, zx_t_list, qzx_t_list, pxz_t_list
 
@@ -349,7 +377,6 @@ class MCRNNVAE(nn.Module):
         # ITERATE OVER THE SEQUENCE, at each time point
         for tp in range(x[0].size(0)):
             #Need to repopulate the list so that it contains a single time point, still being a list
-            #of teh 
             x_t = [x_ch[tp, :, :] for x_ch in x]
             hnext, zp_t, zx_t, qzx_t, pxz_t = self.step(x_t, ht)
             # recover the initial shape (nch, nt, nbatch, nfeat)
@@ -359,6 +386,7 @@ class MCRNNVAE(nn.Module):
                 zx[i].append(zx_t[i])
                 pxz[i].append(pxz_t[i])
                 zp[i].append(zp_t[i])
+                qzx[i].append(qzx_t[i])
             ht = hnext
         #Return similar to the mcvae implementation
         return {
@@ -390,6 +418,7 @@ class MCRNNVAE(nn.Module):
         self.eval()
         av_ch = range(self.n_channels) if av_ch is None else av_ch
 
+        data_ntp = data[0].size(0)
         if self.is_fitted:
             with torch.no_grad():
                 # initalize ht
@@ -399,20 +428,23 @@ class MCRNNVAE(nn.Module):
                 z = [[] for _ in range(self.n_channels)]
                 pxz = [[] for _ in range(self.n_channels)]
                 zp = [[] for _ in range(self.n_channels)]
+                qzx = [[] for _ in range(self.n_channels)]
 
                 #For each timepoint
-                for tp in range(data[0].size(0)):
+                for tp in range(nt):
                     #Need to repopulate the list so that it contains a single time point, still being a list
-                    #of teh 
-                    x_t = [x_ch[tp, :, :] for x_ch in data]
+                    #If we sample, we just use the 
+                    if tp < data_ntp: x_t = [x_ch[tp, :, :] for x_ch in data]
+                    else: x_t = None
                     # If we have x information, we do a normal step
-                    hnext, zp_t, z_t, _, pxz_t = self.step(x_t, ht, tp >= len(x_t), av_ch)
+                    hnext, zp_t, z_t, qzx_t, pxz_t = self.step(x_t, ht, tp >= data_ntp, av_ch)
 
                     for i in range(self.n_channels):
                         #this xnext needs to be averaged across all the values, as it is reocnstructed from all channels
                         z[i].append(z_t[i])
                         pxz[i].append(pxz_t[i])
                         zp[i].append(zp_t[i])
+                        qzx[i].append(qzx_t[i])
                     ht = hnext
 
                 # For xnext, we need to obtain the average of the reconstruction across channels and timepoints
@@ -421,12 +453,14 @@ class MCRNNVAE(nn.Module):
                     for t in range(data[0].size(0)):
                         xhat = torch.stack([pxz[ch][t][i].loc.cpu().detach() for ch in av_ch]).mean(0)
                         X_hat[i].append(xhat.numpy())
+                    X_hat[i] = np.asarray(X_hat[i]) #Convert to np array
 
                 z = np.array([[x2.cpu().detach().numpy() for x2 in x] for x in z])
 
                 pred = {
                     'xnext': X_hat,
                     'z': z,
+                    'qzx': qzx,
                     'pxz': pxz,
                     'zp': zp
                 }
@@ -544,6 +578,7 @@ class MCRNNVAE(nn.Module):
                 # KL divergence
                 #the second distribution is not the normal, is the prior!!
                 kl += self.KL_fn(qzx[i][t], zp[i][t]).sum(1).mean(0)
+
                 for j in range(self.n_channels):
                     # i = latent comp; j = decoder
                     # Direct (i=j) and Crossed (i!=j) Log-Likelihood
@@ -562,6 +597,44 @@ class MCRNNVAE(nn.Module):
             return total
         else:
             return losses
+
+
+    def recon_loss(self, fwd_return, target=None):
+        """ 
+        Reconstruction loss.
+
+        Done to obtain mae and reconstruction, and also 
+        from a target
+        This function is not supposed to be used in the interior
+        """
+        X = fwd_return['x'] if target is None else target
+        pxz = fwd_return['pxz']
+        zp = fwd_return['zp']
+
+        rec_loss = 0
+        mae_loss = 0
+        # For each time point,
+        for t in range(X[0].shape[0]):
+            # Convert to tensor for calculations, if its not a tensor
+            x = [torch.FloatTensor(x_ch[t, :, :]).to(self.device) for x_ch in X]
+            for i in range(self.n_channels):
+                # KL divergence
+                #the second distribution is not the normal, is the prior!!
+
+                for j in range(self.n_channels):
+                    # i = latent comp; j = decoder
+                    # Direct (i=j) and Crossed (i!=j) Log-Likelihood
+                    rec_loss += reconstruction_error(target=x[j], predicted=pxz[i][t][j].loc)
+                    mae_loss += mae(target=x[j], predicted=pxz[i][t][j].loc)
+
+        losses = {
+            'rec_loss': rec_loss.item(),
+            'mae': mae_loss.item()
+        }
+
+        return losses
+
+
 
     def init_loss(self):
         self.loss = {

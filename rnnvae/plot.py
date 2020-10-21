@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import itertools
+from matplotlib.patches import Ellipse
 
 def plot_losses(loss_curve, out_dir, out_name):
     # Plot the loss curve
@@ -168,3 +170,144 @@ def plot_z_time_2d(z, max_timepoints,dims, out_dir, out_name='latent_space_2d'):
     plt.title(f"Latent space all timepoints, colord by tp", size=15)
     plt.savefig(f'{out_dir}/{out_name}.png')
     plt.close()
+
+
+def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text=None, all_plots=False, uncertainty=True, comp=None, savefig=False, out_dir=None):
+    """
+    Copied from MCVAE.
+
+    qzx is already processed data from the decoder.
+    qzx should be of the form [nch, ntp] and converted to cpu
+    Plot the latent space on the data.
+    Adapted for temporal data.
+    This adaptation means that we add a new parameter named time,
+    Which takes into account which timepoint to plot (can be 'all')
+    # If we want to classify by time, use the classificator
+    parameter with the timepoint info OUTSIDE the tal.
+
+    #Classificator should correspond to the length of the data and tp indicated.
+    """
+    sns.reset_defaults()    
+    channels = len(qzx)
+    comps = model.latent
+    #Not really used
+
+    if classificator is not None:
+        groups = np.unique(classificator)
+
+    # One figure per latent component
+    #  Linear relationships expected between channels
+    if comp is not None:
+        itercomps = comp if isinstance(comp, list) else [comp]
+    else:
+        itercomps = range(comps)
+    # For each component
+    for comp in itercomps:
+        fig, axs = plt.subplots(channels, channels, figsize=(20,20))
+        fig.suptitle(r'$z_{' + str(comp) + '}$', fontsize=30)
+        for i, j in itertools.product(range(channels), range(channels)):
+            ax = axs if channels == 1 else axs[j, i]
+            if i == j:
+                ax.text(
+                    0.5, 0.5, 'z|{}'.format(model.ch_name[i]),
+                    horizontalalignment='center', verticalalignment='center',
+                    fontsize=20
+                )
+                ax.axis('off')
+            elif i > j:
+                xi, xj, si, sj = (np.array([]) for i in range(4))
+                # select only the timepoints needed
+                # We assume that all subjects have the same number of timepoints
+                for tp in range(max_tp):
+                    if plt_tp != "all" and tp not in plt_tp:
+                        continue
+                    #Go subject by subject and append the information
+                    xi = np.append(xi, qzx[i][tp].loc.cpu().detach().numpy()[:, comp])
+                    xj = np.append(xj, qzx[j][tp].loc.cpu().detach().numpy()[:, comp])
+                    si = np.append(si, qzx[i][tp].scale.cpu().detach().numpy()[:, comp])
+                    sj = np.append(sj, qzx[j][tp].scale.cpu().detach().numpy()[:, comp])
+                ells = [Ellipse(xy=[xi[p], xj[p]], width=2 * si[p], height=2 * sj[p]) for p in range(len(xi))]
+                if classificator is not None:
+                    #For this to work, length of classificator must be equal to length of the timepoints and subjects 
+                    for g in groups:
+                        g_idx = classificator == g
+                        ax.plot(xi[g_idx], xj[g_idx], '.', alpha=0.75, markersize=15)
+                        if uncertainty:
+                            color = ax.get_lines()[-1].get_color()
+                            for idx in np.where(g_idx)[0]:
+                                ax.add_artist(ells[idx])
+                                ells[idx].set_alpha(0.1)
+                                ells[idx].set_facecolor(color)
+                else:
+                    ax.plot(xi, xj, '.')
+                    if uncertainty:
+                        for e in ells:
+                            ax.add_artist(e)
+                            e.set_alpha(0.1)
+                if text is not None:
+                    [ax.text(*item) for item in zip(xi, xj, text)]
+                # Bisettrice
+                lox, hix = ax.get_xlim()
+                loy, hiy = ax.get_ylim()
+                lo, hi = np.min([lox, loy]), np.max([hix, hiy])
+                ax.plot([lo, hi], [lo, hi], ls="--", c=".3")
+            else:
+                ax.axis('off')
+        if classificator is not None:
+            groups = sorted(groups, key=lambda t: int(t))
+            [axs[-1, 0].plot(0,0) for g in groups]
+            legend = ['{} (n={})'.format(g, len(classificator[classificator==g])) for g in groups]
+            axs[-1,0].legend(legend)
+            try:
+                axs[-1, 0].set_title(classificator.name)
+            except AttributeError:
+                axs[-1, 0].set_title('Groups')
+
+        #save figure
+        if savefig:
+            plt.savefig(f"{out_dir}latent_space_zcomp_{comp}.png")
+            plt.close()
+
+    if all_plots:  # comps > 1:
+        # TODO: remove based on components
+        # One figure per channel
+        #  Uncorrelated relationsips expected between latent components
+        for ch in range(channels):
+            fig, axs = plt.subplots(comps, comps, figsize=(20,20))
+            fig.suptitle(model.ch_name[ch], fontsize=30)
+            for i, j in itertools.product(range(comps), range(comps)):
+                if i == j:
+                    axs[j, i].text(
+                        0.5, 0.5, r'$z_{' + str(i) + '}$',
+                        horizontalalignment='center', verticalalignment='center',
+                        fontsize=20
+                    )
+                    axs[j, i].axis('off')
+                elif i > j:
+                    xi, xj = (np.array([]) for i in range(2))
+                    for tp in range(max_tp):
+                        if plt_tp != "all" and tp not in plt_tp:
+                            continue
+                        xi = np.append(xi, qzx[ch][tp].loc.cpu().detach().numpy()[:, i])
+                        xj = np.append(xj, qzx[ch][tp].loc.cpu().detach().numpy()[:, j])
+                    if classificator is not None:
+                        for g in groups:
+                            g_idx = classificator == g
+                            axs[j, i].plot(xi[g_idx], xj[g_idx], '.')
+                    else:
+                        axs[j, i].plot(xi, xj, '.')
+                    # zero axis
+                    axs[j, i].axhline(y=0, ls="--", c=".3")
+                    axs[j, i].axvline(x=0, ls="--", c=".3")
+                else:
+                    axs[j, i].axis('off')
+            if classificator is not None:
+                groups = sorted(groups, key=lambda t: int(t))
+                [axs[-1, 0].plot(0,0) for g in groups]
+                legend = ['{} (n={})'.format(g, len(classificator[classificator==g])) for g in groups]
+                axs[-1,0].legend(legend)
+
+            #save figure
+            if savefig:
+                plt.savefig(f"{out_dir}latent_space_ch_{model.ch_name[ch]}.png")
+                plt.close()

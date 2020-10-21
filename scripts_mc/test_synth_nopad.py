@@ -18,7 +18,7 @@ import torch
 import numpy as np
 from sklearn.metrics import mean_absolute_error
 from rnnvae import rnnvae
-from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_many_trajectories
+from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_many_trajectories, plot_latent_space
 from rnnvae.data_gen import SinDataGenerator
 
 
@@ -90,21 +90,9 @@ def run_experiment(p, out_dir):
     ### After training, save the model!
     model.save(out_dir, 'model.pt')
 
-
     # Predict the reconstructions from X_val and X_train
-    X_test_fwd = model.predict(X_test_tensor)
-    X_train_fwd = model.predict(X_train_tensor)
-    import pdb; pdb.set_trace()
-    
-    """
-    #Reformulate things
-    X_train_fwd['xnext'] = np.array(X_train_fwd['xnext']).swapaxes(0,1)
-    X_train_fwd['z'] = np.array(X_train_fwd['z']).swapaxes(0,1)
-    X_test_fwd['xnext'] = np.array(X_test_fwd['xnext']).swapaxes(0,1)
-    X_test_fwd['z'] = np.array(X_test_fwd['z']).swapaxes(0,1)
-
-    X_test_hat = X_test_fwd["xnext"]
-    X_train_hat = X_train_fwd["xnext"]
+    X_test_fwd = model.predict(X_test_tensor, nt=p["ntp"])
+    X_train_fwd = model.predict(X_train_tensor, nt=p["ntp"])
 
     # Unpad using the masks
     #plot validation and 
@@ -112,19 +100,43 @@ def run_experiment(p, out_dir):
     plot_total_loss(model.loss['kl'], model.val_loss['kl'], "kl_loss", out_dir, "kl_loss.png")
     plot_total_loss(model.loss['ll'], model.val_loss['ll'], "ll_loss", out_dir, "ll_loss.png") #Negative to see downard curve
 
-    #Compute mean absolute error over all sequences
-    mse_train = np.mean([mean_absolute_error(xval, xhat) for (xval, xhat) in zip(X_train, X_train_hat)])
-    print('MSE over the train set: ' + str(mse_train))
 
-    #Compute mean absolute error over all sequences
-    mse_test = np.mean([mean_absolute_error(xval, xhat) for (xval, xhat) in zip(X_test, X_test_hat)])
-    print('MSE over the test set: ' + str(mse_test))
-    
-    z_train = X_train_fwd['z']
-    z_test = X_test_fwd['z']
-    z_train = [Z for (i, Z) in enumerate(z_train)]
-    z_test = [Z for (i, Z) in enumerate(z_test)]    
-    z = z_train + z_test
+    #Compute mse and reconstruction loss
+    test_loss = model.recon_loss(X_test_fwd, target=X_test_fwd['xnext'])
+    train_loss = model.recon_loss(X_train_fwd, target=X_train_fwd['xnext'])
+
+    print('MSE over the train set: ' + str(train_loss["mae"]))
+    print('Reconstruction loss over the train set: ' + str(train_loss["rec_loss"]))
+
+    print('MSE over the test set: ' + str(test_loss["mae"]))
+    print('Reconstruction loss the train set: ' + str(test_loss["rec_loss"]))
+
+    #Sampling
+    # Create first samples with only one timepoint
+    X_samples_tensor = []
+    nsamples = 500
+    #generate the data
+    for ch_curves in p['curves']:
+
+        gen_model = SinDataGenerator(ch_curves, p["ntp"], p["noise"])
+        samples = gen_model.generate_n_samples(nsamples)
+        X_samples = np.asarray([y[:1] for (_,y) in samples])
+        X_samples_tensor.append(torch.FloatTensor(X_samples).permute((1,0,2)).to(DEVICE))
+
+    X_sample = model.predict(X_samples_tensor, p['ntp'])
+
+    #Get the samples
+    X_pred = [np.array(x).swapaxes(0,1) for x in X_sample['xnext']]
+    z_sample = [np.array(x).swapaxes(0,1) for x in X_sample['z']]
+
+    # plot the samples over time
+    for x_ch, ch_name in zip(X_pred, p["model_name_dict"].values()):
+        plot_many_trajectories(x_ch, 'all', p["ntp"], out_dir, f'ch_{ch_name}_x_samples')
+
+    ##Latent spasce
+    #Reformulate things
+    z_train = [np.array(x).swapaxes(0,1) for x in X_train_fwd['z']]
+    z_test = [np.array(x).swapaxes(0,1) for x in X_test_fwd['z']]
 
     # Dir for projections
     proj_path = 'z_proj/'
@@ -132,26 +144,11 @@ def run_experiment(p, out_dir):
         os.makedirs(out_dir + proj_path)
 
     #plot latent space
-    for dim0 in range(p["z_dim"]):
-        for dim1 in range(dim0, p["z_dim"]):
-            if dim0 == dim1: continue   # very dirty
-            plot_z_time_2d(z, p["ntp"], [dim0, dim1], out_dir + proj_path, out_name=f'z_d{dim0}_d{dim1}')
-
-    #Sampling
-    # Create first samples with only one timepoint
-    gen_model = SinDataGenerator(p["curves"], p["ntp"], p["noise"])
-    samples = gen_model.generate_n_samples(500)
-    X_samples = np.asarray([y[:1] for (_,y) in samples])
-    X_samples = torch.FloatTensor(X_samples).permute((1,0,2))
-
-    X_sample = model.sequence_predict(X_samples.to(DEVICE), p['ntp'])
-
-    #Get the samples
-    X_sample['xnext'] = np.array(X_sample['xnext']).swapaxes(0,1)
-    X_sample['z'] = np.array(X_sample['z']).swapaxes(0,1)
-
-    # plot the samples over time
-    plot_many_trajectories(X_sample['xnext'], 'all', p["ntp"], out_dir, 'x_samples')
+    for ch in range(p["n_channels"]):
+        for dim0 in range(p["z_dim"]):
+            for dim1 in range(dim0, p["z_dim"]):
+                if dim0 == dim1: continue   # very dirty
+                plot_z_time_2d(z_train[ch], p["ntp"], [dim0, dim1], out_dir + proj_path, out_name=f'z_ch_{ch}_d{dim0}_d{dim1}')
 
     # Dir for projections
     sampling_path = 'z_proj_sampling/'
@@ -159,22 +156,39 @@ def run_experiment(p, out_dir):
         os.makedirs(out_dir + sampling_path)
 
     #plot latent space
-    for dim0 in range(p["z_dim"]):
-        for dim1 in range(dim0, p["z_dim"]):
-            if dim0 == dim1: continue   # very dirty
-            plot_z_time_2d(X_sample['z'], p["ntp"], [dim0, dim1], out_dir + sampling_path, out_name=f'z_d{dim0}_d{dim1}')
-    
+    for ch in range(p["n_channels"]):
+        for dim0 in range(p["z_dim"]):
+            for dim1 in range(dim0, p["z_dim"]):
+                if dim0 == dim1: continue   # very dirty
+                plot_z_time_2d(z_sample[ch], p["ntp"], [dim0, dim1], out_dir + sampling_path, out_name=f'z_ch_{ch}_d{dim0}_d{dim1}')
+
+
+    # Test the new function of latent space
+    qzx = [np.array(x) for x in X_train_fwd['qzx']]
+
+    # Get classificator labels, for n time points
+    classif = [[i]*p["nsamples"] for i in range(p["ntp"])]
+    classif = np.array([str(item) for elem in classif for item in elem])
+    print("on_classif")
+    print(p["ntp"])
+    print(len(classif))
+
+    out_dir_sample = out_dir + 'test_zspace_function/'
+    if not os.path.exists(out_dir_sample):
+        os.makedirs(out_dir_sample)
+
+    plot_latent_space(model, qzx, p["ntp"], classificator=classif, plt_tp='all',
+                    all_plots=False, uncertainty=True, savefig=True, out_dir=out_dir_sample)
+
     loss = {
-        "mse_train" : mse_train,
-        "mse_test": mse_test,
+        "mse_train" : train_loss["mae"],
+        "mse_test": test_loss["mae"],
         "loss_total": model.loss['total'][-1],
         "loss_kl": model.loss['kl'][-1],
         "loss_ll": model.loss['ll'][-1]
     }
 
     return loss
-    """
-    return 0
 
 if __name__ == "__main__":
 
@@ -186,8 +200,8 @@ if __name__ == "__main__":
         ("sigmoid", {"L": 1, "k": 5, "x0": 5})]
         ]
     
-    names = {"1": "c1", 
-             "2":"c2"}
+    names = {"0":"c1", 
+             "1":"c2"}
 
     ### Parameter definition
     params = {
@@ -195,7 +209,7 @@ if __name__ == "__main__":
         "z_dim": 5,
         "hidden": 20,
         "n_layers": 1,
-        "n_epochs": 500,
+        "n_epochs": 1500,
         "clip": 10,
         "learning_rate": 1e-3,
         "batch_size": 128,
