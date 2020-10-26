@@ -51,7 +51,7 @@ def pandas_to_data_timeseries(df, feat, n_timesteps = 5, normalize=True, id_col 
     sample_list = np.unique(df[id_col])
 
     # Create base numpy structure
-    X = np.zeros((len(sample_list), n_timesteps, len(feat)))
+    X = []
 
     # Iterate over each subject and fill it
     df_feats = df.loc[:, feat]
@@ -61,12 +61,10 @@ def pandas_to_data_timeseries(df, feat, n_timesteps = 5, normalize=True, id_col 
         for i in range(df_feats.shape[1]):
             df_feats.iloc[:,i] = (df_feats.iloc[:,i] - np.mean(df_feats.iloc[:,i]))/np.std(df_feats.iloc[:,i])
 
-    i = 0
     for ptid in sample_list:
         i_list = df.index[df['PTID'] == ptid]
-        feats = df_feats.iloc[i_list, :].values
-        X[i, :, :] = feats
-        i += 1
+        feats = df_feats.iloc[i_list].values
+        X.append(feats)
 
     # Return numpy dataframe
     return X
@@ -183,7 +181,7 @@ def open_MRI_data(csv_path, train_set = 0.8, n_followups=5, normalize=True, retu
     print(data_final.shape)
 
     # Normalize only features
-    data_final.loc[:,mri_col] = data_final.loc[:,mri_col].apply(lambda x: (x-x.mean())/ x.std(), axis=0)
+    # data_final.loc[:,mri_col] = data_final.loc[:,mri_col].apply(lambda x: (x-x.mean())/ x.std(), axis=0)
 
     # Divide between test and train
     from sklearn.model_selection import GroupShuffleSplit
@@ -211,15 +209,16 @@ def open_MRI_data(csv_path, train_set = 0.8, n_followups=5, normalize=True, retu
         df_y_test = df_test
 
         # Add actual age columns
-        df_y_train["AGE_L"] = df_y_train["AGE_demog"] + df_y_train["Years_bl"]
-        df_y_test["AGE_L"] = df_y_test["AGE_demog"] + df_y_test["Years_bl"] 
+        df_y_train["AGE"] = df_y_train["AGE_demog"] + df_y_train["Years_bl"]
+        df_y_test["AGE"] = df_y_test["AGE_demog"] + df_y_test["Years_bl"] 
 
-        cov_cols = ["VISCODE","AGE_demog","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
+
+        cov_cols = ["AGE", "VISCODE","AGE_demog","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
         Y_train = {}
         Y_test = {}
         for col in cov_cols:
-            Y_train[col] = pandas_to_data_timeseries_var(df_y_train, col, n_followups, False)
-            Y_test[col] = pandas_to_data_timeseries_var(df_y_test, col, n_followups, False)
+            Y_train[col] = pandas_to_data_timeseries(df_y_train, col, n_followups, False)
+            Y_test[col] = pandas_to_data_timeseries(df_y_test, col, n_followups, False)
 
         return X_train, X_test, Y_train, Y_test
 

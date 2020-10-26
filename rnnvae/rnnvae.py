@@ -78,7 +78,7 @@ class PhiBlock(nn.Module):
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.phi_layers.append(nn.Linear(self.input_size, self.hidden_size))
-            #self.phi_layers.append(nn.ReLU())
+            # self.phi_layers.append(nn.ReLU())
             self.input_size = self.hidden_size
 
     def forward(self, x):
@@ -111,7 +111,7 @@ class VariationalBlock(nn.Module):
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.var_layers.append(nn.Linear(self.input_size, self.hidden_size))
-            #self.var_layers.append(nn.ReLU())
+            # self.var_layers.append(nn.ReLU())
             self.input_size = self.hidden_size
 
         #TODO: MU COULD BE USING A SIGMOID FOR THE OUTPUT
@@ -236,8 +236,8 @@ class ModelRNNVAE(nn.Module):
         # Sampling from the prior
         z_prior = self.prior(ht[-1])
         # test this
-        z_t = self.sample_from(z_prior)
-        # z_t = z_prior.rsample() #Hard sampling because we want variation
+        # z_t = self.sample_from(z_prior)
+        z_t = z_prior.rsample() #Hard sampling because we want variation
 
         # Apply phi_z
         phi_z_t = self.phi_z(z_t)

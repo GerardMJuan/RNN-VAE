@@ -132,39 +132,61 @@ def plot_z_time_1d():
     print('NYI')
 
 
-def plot_z_time_2d(z, max_timepoints,dims, out_dir, out_name='latent_space_2d'):
+def plot_z_time_2d(z, max_timepoints, dims, out_dir, c='tp', Y=None, out_name='latent_space_2d'):
     """
     Plot two dimension of the latent space with all the timepoints there,
-    colored by timepoints
+    c parameter can be time point, or any other value in the Y dictionary
     """
     sns.set_theme()
     sns.set_context("paper")
     plt.figure(figsize=(10, 10))
 
     # create color cmap
-    pallete = sns.color_palette("viridis", max_timepoints)
+    if c == 'DX':
+        pallete = sns.color_palette(["#2a9e1e", "#bfbc1a", "#af1f1f"])
+        #apply to Y
+        dx_dict = {
+            "NL": "CN",
+            "MCI": "MCI",
+            "MCI to NL": "CN",
+            "Dementia": "AD",
+            "Dementia to MCI": "MCI",
+            "NL to MCI": "MCI",
+            "NL to Dementia": "AD",
+            "MCI to Dementia": "AD"
+        }
+    else:
+        pallete = sns.color_palette("viridis", as_cmap=True)
 
     z_d0_full = []
     z_d1_full = []
-    tp_full = []
+    color = []
     dim0 = dims[0]
     dim1 = dims[1]
     for tp in range(max_timepoints):
 
         z_d0 = [x[tp, dim0] for x in z if x.shape[0] > tp]
-
         z_d1 = [x[tp, dim1] for x in z if x.shape[0] > tp]
         
         #populate 
         z_d0_full = z_d0_full + z_d0
         z_d1_full = z_d1_full + z_d1
-        tp_full = tp_full + [tp]*(len(z_d0))
 
+        # colorise
+        if c == 'tp':
+            color = color + [tp]*(len(z_d0))
+        elif c == 'DX':
+            color = color + [dx_dict[x[tp]] for x in Y[c] if x.shape[0] > tp]
+        else:
+            color = color + [x[tp] for x in Y[c] if x.shape[0] > tp]
 
-    sns.scatterplot(x=z_d0_full,y=z_d1_full,hue=tp_full, palette="viridis", s=60)
+    print(len(z_d0_full))
+    print(len(z_d1_full))
+    print(len(color))
+    sns.scatterplot(x=z_d0_full,y=z_d1_full,hue=color, palette=pallete, s=60)
     ##Add title, x and y axis
     plt.xlabel(f"Dim {dim0}", size=13)
     plt.ylabel(f"Dim {dim1}", size=13)
-    plt.title(f"Latent space all timepoints, colord by tp", size=15)
+    plt.title(f"Latent space all timepoints, colored by {c}", size=15)
     plt.savefig(f'{out_dir}/{out_name}.png')
     plt.close()

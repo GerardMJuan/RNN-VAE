@@ -132,9 +132,11 @@ dmypy.json
 data/*
 
 # experiments folder
-experiments/*
+experiments/
+experiments_mc/
 
 #LOGS folder
 LOGS/
 
 env.sh
+*.csv

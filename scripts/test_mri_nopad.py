@@ -7,18 +7,13 @@ However, we use sequences of fixed length and we do not introduce padding at all
 import sys
 import os
 sys.path.insert(0, os.path.abspath('./'))
-import math
 import torch
-import torch.nn as nn
 import numpy as np
-import torch.utils
-import torch.utils.data
-from torchvision import datasets, transforms
-from torch.autograd import Variable
-from rnnvae.rnnvae import ModelRNNVAE
 from sklearn.metrics import mean_absolute_error
+from rnnvae import rnnvae
 from rnnvae.utils import open_MRI_data
-from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d
+from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_many_trajectories
+
 
 def run_experiment(p, csv_path, out_dir):
     """
@@ -37,6 +32,13 @@ def run_experiment(p, csv_path, out_dir):
     torch.manual_seed(p["seed"])
     np.random.seed(p["seed"])
 
+    #Redirect output to the out dir
+    sys.stdout = open(out_dir + 'output.out', 'w')
+
+    #save parameters to the out dir 
+    with open(out_dir + "params.txt","w") as f:
+        f.write(str(p))
+
     # DEVICE
     ## Decidint on device on device.
     DEVICE_ID = 0
@@ -45,11 +47,16 @@ def run_experiment(p, csv_path, out_dir):
         torch.cuda.set_device(DEVICE_ID)
 
     # LOAD DATA
-    X_train, X_test = open_MRI_data(csv_path, train_set=0.8, n_followups=p["ntp"], normalize=True)
-
+    X_train, X_test, Y_train, Y_test = open_MRI_data(csv_path, train_set=0.9, normalize=True, return_covariates=True)
+    
+    #Combine test and train Y for later
+    Y = {}
+    for k in Y_train.keys():
+        Y[k] = Y_train[k] + Y_test[k]
+    
     # List of (nt, nfeatures) numpy objects
-    nfeatures = X_train[0].shape[1]
-    print(nfeatures)
+    p["x_size"] = X_train[0].shape[1]
+    print(p["x_size"])
 
     # Apply padding to both X_train and X_val
     #Permute so that dimension is (tp, nbatch, feat)
@@ -57,10 +64,10 @@ def run_experiment(p, csv_path, out_dir):
     X_test_tensor = torch.FloatTensor(X_test).permute((1,0,2))
 
     # Define model and optimizer
-    model = ModelRNNVAE(p["x_size"], p["h_size"], p["hidden"], p["n_layers"], 
-                        p["hidden"], p["n_layers"], p["hidden"],
-                        p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
-                        p["clip"], p["n_epochs"], p["batch_size"])
+    model = rnnvae.ModelRNNVAE(p["x_size"], p["h_size"], p["hidden"], p["n_layers"], 
+                            p["hidden"], p["n_layers"], p["hidden"],
+                            p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
+                            p["clip"], p["n_epochs"], p["batch_size"], DEVICE)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=p["learning_rate"])
     model.optimizer = optimizer
@@ -78,9 +85,9 @@ def run_experiment(p, csv_path, out_dir):
 
     #Reformulate things
     X_train_fwd['xnext'] = np.array(X_train_fwd['xnext']).swapaxes(0,1)
-    X_train_fwd['zx'] = np.array(X_train_fwd['zx']).swapaxes(0,1)
+    X_train_fwd['z'] = np.array(X_train_fwd['z']).swapaxes(0,1)
     X_test_fwd['xnext'] = np.array(X_test_fwd['xnext']).swapaxes(0,1)
-    X_test_fwd['zx'] = np.array(X_test_fwd['zx']).swapaxes(0,1)
+    X_test_fwd['z'] = np.array(X_test_fwd['z']).swapaxes(0,1)
 
     X_test_hat = X_test_fwd["xnext"]
     X_train_hat = X_train_fwd["xnext"]
@@ -105,6 +112,7 @@ def run_experiment(p, csv_path, out_dir):
     subj = 6
     feature = 12
     # For train
+
     plot_trajectory(X_train, X_train_hat, subj, 'all', out_dir, f'traj_train_s_{subj}_f_all') # testing for a given subject
     plot_trajectory(X_train, X_train_hat, subj, feature, out_dir, f'traj_train_s_{subj}_f_{feature}') # testing for a given feature
 
@@ -113,21 +121,44 @@ def run_experiment(p, csv_path, out_dir):
     plot_trajectory(X_test, X_test_hat, subj, feature, out_dir, f'traj_test_s_{subj}_f_{feature}') # testing for a given feature
 
     
-    z_train = X_train_fwd['zx']
-    z_test = X_test_fwd['zx']
+    z_train = X_train_fwd['z']
+    z_test = X_test_fwd['z']
     z_train = [Z for (i, Z) in enumerate(z_train)]
     z_test = [Z for (i, Z) in enumerate(z_test)]    
     z = z_train + z_test
 
     # Dir for projections
-    if not os.path.exists(out_dir + 'z_proj/'):
-        os.makedirs(out_dir + 'z_proj/')
+    proj_path = 'z_proj/'
+    if not os.path.exists(out_dir + proj_path):
+        os.makedirs(out_dir + proj_path)
 
     #plot latent space
     for dim0 in range(p["z_dim"]):
         for dim1 in range(dim0, p["z_dim"]):
             if dim0 == dim1: continue   # very dirty
             plot_z_time_2d(z, p["ntp"], [dim0, dim1], out_dir + 'z_proj/', out_name=f'z_d{dim0}_d{dim1}')
+
+    # Dir for projections
+    sampling_path = 'z_proj_dx/'
+    if not os.path.exists(out_dir + sampling_path):
+        os.makedirs(out_dir + sampling_path)
+
+    #plot latent space
+    for dim0 in range(p["z_dim"]):
+        for dim1 in range(dim0, p["z_dim"]):
+            if dim0 == dim1: continue   # very dirty
+            plot_z_time_2d(z, p["ntp"], [dim0, dim1], out_dir + sampling_path, c='DX', Y=Y, out_name=f'z_d{dim0}_d{dim1}')
+
+    # Dir for projections
+    sampling_path = 'z_proj_age/'
+    if not os.path.exists(out_dir + sampling_path):
+        os.makedirs(out_dir + sampling_path)
+
+    #plot latent space
+    for dim0 in range(p["z_dim"]):
+        for dim1 in range(dim0, p["z_dim"]):
+            if dim0 == dim1: continue   # very dirty
+            plot_z_time_2d(z, p["ntp"], [dim0, dim1], out_dir + sampling_path, c='AGE', Y=Y, out_name=f'z_d{dim0}_d{dim1}')
 
 
     #Sampling
@@ -137,12 +168,13 @@ def run_experiment(p, csv_path, out_dir):
     X_sample = model.sample_latent(nsamples, nt)
 
     #Get the samples
-    X_sample['x'] = np.array(X_sample['x']).swapaxes(0,1)
+    X_sample['xnext'] = np.array(X_sample['xnext']).swapaxes(0,1)
     X_sample['z'] = np.array(X_sample['z']).swapaxes(0,1)
 
     # Dir for projections
-    if not os.path.exists(out_dir + 'z_proj_sampling/'):
-        os.makedirs(out_dir + 'z_proj_sampling/')
+    sampling_path = 'z_proj_sampling/'
+    if not os.path.exists(out_dir + sampling_path):
+        os.makedirs(out_dir + sampling_path)
 
     #plot latent space
     for dim0 in range(p["z_dim"]):
@@ -169,7 +201,7 @@ if __name__ == "__main__":
         "z_dim": 5,
         "hidden": 5,
         "n_layers": 1,
-        "n_epochs": 1500,
+        "n_epochs": 100,
         "clip": 10,
         "learning_rate": 1e-3,
         "ntp": 5,

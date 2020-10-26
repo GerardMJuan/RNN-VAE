@@ -5,18 +5,14 @@ Test the RNNVAE with real MRI longitudinal data.
 import sys
 import os
 sys.path.insert(0, os.path.abspath('./'))
-import math
 import torch
-import torch.nn as nn
+from torch import nn
 import numpy as np
-import torch.utils
-import torch.utils.data
-from torchvision import datasets, transforms
-from torch.autograd import Variable
-from rnnvae.rnnvae import ModelRNNVAE
 from sklearn.metrics import mean_absolute_error
+from rnnvae import rnnvae
 from rnnvae.utils import open_MRI_data_var
-from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d
+from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_many_trajectories
+
 
 def run_experiment(p, csv_path, out_dir):
     """
@@ -34,6 +30,14 @@ def run_experiment(p, csv_path, out_dir):
     torch.manual_seed(p["seed"])
     np.random.seed(p["seed"])
 
+    #Redirect output to the out dir
+    sys.stdout = open(out_dir + 'output.out', 'w')
+
+
+    #save parameters to the out dir 
+    with open(out_dir + "params.txt","w") as f:
+        f.write(str(p))
+
     # DEVICE
     ## Decidint on device on device.
     DEVICE_ID = 0
@@ -42,17 +46,24 @@ def run_experiment(p, csv_path, out_dir):
         torch.cuda.set_device(DEVICE_ID)
 
     # LOAD DATA
-    X_train, X_test = open_MRI_data_var(csv_path, train_set=0.8, normalize=True)
+    X_train, X_test, Y_train, Y_test = open_MRI_data_var(csv_path, train_set=0.9, normalize=True, return_covariates=True)
+
+    #Combine test and train Y for later
+    Y = {}
+    for k in Y_train.keys():
+        Y[k] = Y_train[k] + Y_test[k]
 
     # List of (nt, nfeatures) numpy objects
-    nfeatures = X_train[0].shape[1]
-    print(nfeatures)
+    p["x_size"] = X_train[0].shape[1]
+    print(p["x_size"])
 
     # Apply padding to both X_train and X_val
     X_train_tensor = [ torch.FloatTensor(t) for t in X_train ]
     X_train_pad = nn.utils.rnn.pad_sequence(X_train_tensor, batch_first=False, padding_value=np.nan)
     X_test_tensor = [ torch.FloatTensor(t) for t in X_test ]
     X_test_pad = nn.utils.rnn.pad_sequence(X_test_tensor, batch_first=False, padding_value=np.nan)
+
+    p["ntp"] = max(X_train_pad.size(0), X_test_pad.size(0))
 
     # Those datasets are of size [Tmax, Batch_size, nfeatures]
     # Save mask to unpad later when testing
@@ -63,15 +74,8 @@ def run_experiment(p, csv_path, out_dir):
     X_train_pad[torch.isnan(X_train_pad)] = 0
     X_test_pad[torch.isnan(X_test_pad)] = 0
 
-    #Create the dataloaders
-    # train_loader = torch.utils.data.DataLoader(dataset_train,
-    #                batch_size=batch_size, shuffle=True)
-
-    # test_loader = torch.utils.data.DataLoader(dataset_test, 
-    #               batch_size=batch_size, shuffle=True)
-
     # Define model and optimizer
-    model = ModelRNNVAE(p["x_size"], p["h_size"], p["hidden"], p["n_layers"], 
+    model = rnnvae.ModelRNNVAE(p["x_size"], p["h_size"], p["hidden"], p["n_layers"], 
                         p["hidden"], p["n_layers"], p["hidden"],
                         p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
                         p["clip"], p["n_epochs"], p["batch_size"], DEVICE)
@@ -81,7 +85,7 @@ def run_experiment(p, csv_path, out_dir):
 
     model = model.to(DEVICE)
     # Fit the model
-    model.fit(X_train_tensor.to(DEVICE), X_test_tensor.to(DEVICE))
+    model.fit(X_train_pad.to(DEVICE), X_test_pad.to(DEVICE))
 
     ### After training, save the model!
     model.save(out_dir, 'model.pt')
@@ -92,17 +96,17 @@ def run_experiment(p, csv_path, out_dir):
 
     #Reformulate things
     X_train_fwd['xnext'] = np.array(X_train_fwd['xnext']).swapaxes(0,1)
-    X_train_fwd['zx'] = np.array(X_train_fwd['zx']).swapaxes(0,1)
+    X_train_fwd['z'] = np.array(X_train_fwd['z']).swapaxes(0,1)
     X_test_fwd['xnext'] = np.array(X_test_fwd['xnext']).swapaxes(0,1)
-    X_test_fwd['zx'] = np.array(X_test_fwd['zx']).swapaxes(0,1)
+    X_test_fwd['z'] = np.array(X_test_fwd['z']).swapaxes(0,1)
 
     X_test_hat = X_test_fwd["xnext"]
     X_train_hat = X_train_fwd["xnext"]
 
     # Unpad using the masks
     #after masking, need to rehsape to (nt, nfeat)
-    X_test_hat = [X[mask_test[:,i,:]].reshape((-1, nfeatures)) for (i, X) in enumerate(X_test_hat)]
-    X_train_hat = [X[mask_train[:,i,:]].reshape((-1, nfeatures)) for (i, X) in enumerate(X_train_hat)]
+    X_test_hat = [X[mask_test[:,i,:]].reshape((-1, p["x_size"])) for (i, X) in enumerate(X_test_hat)]
+    X_train_hat = [X[mask_train[:,i,:]].reshape((-1, p["x_size"])) for (i, X) in enumerate(X_train_hat)]
 
     #Compute mean absolute error over all sequences
     mse_train = np.mean([mean_absolute_error(xval, xhat) for (xval, xhat) in zip(X_train, X_train_hat)])
@@ -130,21 +134,47 @@ def run_experiment(p, csv_path, out_dir):
     plot_trajectory(X_test, X_test_hat, subj, feature, out_dir, f'traj_test_s_{subj}_f_{feature}') # testing for a given feature
 
 
-    z_train = X_train_fwd['zx']
-    z_test = X_test_fwd['zx']
-    z_train = [Z for (i, Z) in enumerate(z_train)]
-    z_test = [Z for (i, Z) in enumerate(z_test)]    
+    z_train = X_train_fwd['z']
+    z_test = X_test_fwd['z']
+    # select only the existing time points
+    z_test = [X[mask_test[:,i,:p["z_dim"]]].reshape((-1, p["z_dim"])) for (i, X) in enumerate(z_test)]
+    z_train = [X[mask_train[:,i,:p["z_dim"]]].reshape((-1, p["z_dim"])) for (i, X) in enumerate(z_train)]
+
     z = z_train + z_test
 
     # Dir for projections
-    if not os.path.exists(out_dir + 'z_proj/'):
-        os.makedirs(out_dir + 'z_proj/')
+    proj_path = 'z_proj/'
+    if not os.path.exists(out_dir + proj_path):
+        os.makedirs(out_dir + proj_path)
 
     #plot latent space
     for dim0 in range(p["z_dim"]):
         for dim1 in range(dim0, p["z_dim"]):
             if dim0 == dim1: continue   # very dirty
-            plot_z_time_2d(z, len(X_train_pad), [dim0, dim1], out_dir + 'z_proj/', out_name=f'z_d{dim0}_d{dim1}')
+            plot_z_time_2d(z, p["ntp"], [dim0, dim1], out_dir + 'z_proj/', out_name=f'z_d{dim0}_d{dim1}')
+
+    # Dir for projections
+    sampling_path = 'z_proj_dx/'
+    if not os.path.exists(out_dir + sampling_path):
+        os.makedirs(out_dir + sampling_path)
+
+    #plot latent space
+    for dim0 in range(p["z_dim"]):
+        for dim1 in range(dim0, p["z_dim"]):
+            if dim0 == dim1: continue   # very dirty
+            plot_z_time_2d(z, p["ntp"], [dim0, dim1], out_dir + sampling_path, c='DX', Y=Y, out_name=f'z_d{dim0}_d{dim1}')
+
+    # Dir for projections
+    sampling_path = 'z_proj_age/'
+    if not os.path.exists(out_dir + sampling_path):
+        os.makedirs(out_dir + sampling_path)
+
+    #plot latent space
+    for dim0 in range(p["z_dim"]):
+        for dim1 in range(dim0, p["z_dim"]):
+            if dim0 == dim1: continue   # very dirty
+            plot_z_time_2d(z, p["ntp"], [dim0, dim1], out_dir + sampling_path, c='AGE', Y=Y, out_name=f'z_d{dim0}_d{dim1}')
+
 
 
     # TODO: THIS SAMPLING PROCEDURE NEEDS TO BE UPDATED
@@ -153,19 +183,19 @@ def run_experiment(p, csv_path, out_dir):
     X_sample = model.sample_latent(nsamples, nt)
 
     #Get the samples
-    X_sample['x'] = np.array(X_sample['x']).swapaxes(0,1)
+    X_sample['xnext'] = np.array(X_sample['xnext']).swapaxes(0,1)
     X_sample['z'] = np.array(X_sample['z']).swapaxes(0,1)
 
     # Dir for projections
-    if not os.path.exists(out_dir + 'z_proj_sampling/'):
-        os.makedirs(out_dir + 'z_proj_sampling/')
+    sampling_path = 'z_proj_sampling/'
+    if not os.path.exists(out_dir + sampling_path):
+        os.makedirs(out_dir + sampling_path)
 
     #plot latent space
     for dim0 in range(p["z_dim"]):
         for dim1 in range(dim0, p["z_dim"]):
             if dim0 == dim1: continue   # very dirty
-            plot_z_time_2d(X_sample['z'], len(X_train_pad), [dim0, dim1], out_dir + 'z_proj_sampling/', out_name=f'z_d{dim0}_d{dim1}')
-
+            plot_z_time_2d(X_sample['z'], p["ntp"], [dim0, dim1], out_dir + 'z_proj_sampling/', out_name=f'z_d{dim0}_d{dim1}')
 
 
     loss = {
