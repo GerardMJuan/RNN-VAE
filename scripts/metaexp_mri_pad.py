@@ -14,13 +14,13 @@ import pandas as pd
 
 ### Define grid search of parameters to look over for
 params_grid = {
-    "h_size": [2,5,10],
+    "h_size": [10,20],
     "z_dim": [3,4,5],
-    "hidden": [2,5,10],
-    "n_layers": [1,2],
-    "n_epochs": [2000],
-    "clip": [10],
-    "learning_rate": [1e-3],
+    "hidden": [10, 20],
+    "n_layers": [1],
+    "n_epochs": [100],
+    "clip": [5, 10],
+    "learning_rate": [1e-3,1e-4],
     "batch_size": [128],
     "seed": [1714],
     "noise": [0.15],
@@ -31,7 +31,7 @@ list_loss = []
 
 csv_path = "data/tadpole_mrionly.csv"
 
-base_out_dir = "experiments/meta_mri_lin_pad/"
+base_out_dir = "experiments/meta_mri_lin_pad_2/"
 
 if not os.path.exists(base_out_dir):
     os.makedirs(base_out_dir)
