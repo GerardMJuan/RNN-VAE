@@ -29,7 +29,7 @@ params_grid = {
     "z_dim": [2,3,4],
     "hidden": [2,5,10],
     "n_layers": [1],
-    "n_epochs": [100],
+    "n_epochs": [2000],
     "clip": [10],
     "learning_rate": [1e-3],
     "batch_size": [128],

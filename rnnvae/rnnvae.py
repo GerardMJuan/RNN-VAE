@@ -296,6 +296,7 @@ class MCRNNVAE(nn.Module):
         pxz_t_list = []
 
         phi_zx_list = []
+
         # First part: get all the decoders
         for ch in range(self.n_channels):
             ht = ht_list[ch]
@@ -450,7 +451,7 @@ class MCRNNVAE(nn.Module):
                 # For xnext, we need to obtain the average of the reconstruction across channels and timepoints
                 X_hat = [[] for _ in range(self.n_channels)]
                 for i in range(self.n_channels):
-                    for t in range(data[0].size(0)):
+                    for t in range(nt):
                         xhat = torch.stack([pxz[ch][t][i].loc.cpu().detach() for ch in av_ch]).mean(0)
                         X_hat[i].append(xhat.numpy())
                     X_hat[i] = np.asarray(X_hat[i]) #Convert to np array
