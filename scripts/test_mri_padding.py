@@ -12,9 +12,9 @@ from sklearn.metrics import mean_absolute_error
 from rnnvae import rnnvae
 from rnnvae.utils import open_MRI_data_var
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_many_trajectories
+from sklearn.metrics import mean_squared_error
 
-
-def run_experiment(p, csv_path, out_dir):
+def run_experiment(p, csv_path, out_dir, data_cols='_mri_vol'):
     """
     Function to run the experiments.
     p contain all the hyperparameters needed to run the experiments
@@ -31,7 +31,7 @@ def run_experiment(p, csv_path, out_dir):
     np.random.seed(p["seed"])
 
     #Redirect output to the out dir
-    sys.stdout = open(out_dir + 'output.out', 'w')
+    # sys.stdout = open(out_dir + 'output.out', 'w')
 
 
     #save parameters to the out dir 
@@ -46,7 +46,8 @@ def run_experiment(p, csv_path, out_dir):
         torch.cuda.set_device(DEVICE_ID)
 
     # LOAD DATA
-    X_train, X_test, Y_train, Y_test = open_MRI_data_var(csv_path, train_set=0.9, normalize=True, return_covariates=True)
+    X_train, X_test, Y_train, Y_test, mri_col = open_MRI_data_var(csv_path, train_set=0.9, normalize=True, return_covariates=True, data_cols=data_cols)
+    #TEMPORAL
 
     #Combine test and train Y for later
     Y = {}
@@ -58,7 +59,8 @@ def run_experiment(p, csv_path, out_dir):
     print(p["x_size"])
 
     # Apply padding to both X_train and X_val
-    X_train_tensor = [ torch.FloatTensor(t) for t in X_train ]
+    # REMOVE LAST POINT OF EACH INDIVIDUAL
+    X_train_tensor = [ torch.FloatTensor(t[:-1,:]) for t in X_train]
     X_train_pad = nn.utils.rnn.pad_sequence(X_train_tensor, batch_first=False, padding_value=np.nan)
     X_test_tensor = [ torch.FloatTensor(t) for t in X_test ]
     X_test_pad = nn.utils.rnn.pad_sequence(X_test_tensor, batch_first=False, padding_value=np.nan)
@@ -69,6 +71,10 @@ def run_experiment(p, csv_path, out_dir):
     # Save mask to unpad later when testing
     mask_train = ~torch.isnan(X_train_pad)
     mask_test = ~torch.isnan(X_test_pad)
+
+    # convert to tensor
+    mask_train_tensor = torch.BoolTensor(mask_train)
+    mask_test_tensor = torch.BoolTensor(mask_test)
 
     #convert those NaN to zeros
     X_train_pad[torch.isnan(X_train_pad)] = 0
@@ -85,7 +91,7 @@ def run_experiment(p, csv_path, out_dir):
 
     model = model.to(DEVICE)
     # Fit the model
-    model.fit(X_train_pad.to(DEVICE), X_test_pad.to(DEVICE))
+    model.fit(X_train_pad.to(DEVICE), X_test_pad.to(DEVICE), mask_train_tensor.to(DEVICE), mask_test_tensor.to(DEVICE))
 
     ### After training, save the model!
     model.save(out_dir, 'model.pt')
@@ -109,7 +115,7 @@ def run_experiment(p, csv_path, out_dir):
     X_train_hat = [X[mask_train[:,i,:]].reshape((-1, p["x_size"])) for (i, X) in enumerate(X_train_hat)]
 
     #Compute mean absolute error over all sequences
-    mse_train = np.mean([mean_absolute_error(xval, xhat) for (xval, xhat) in zip(X_train, X_train_hat)])
+    mse_train = np.mean([mean_absolute_error(xval[:-1, :], xhat) for (xval, xhat) in zip(X_train, X_train_hat)])
     print('MSE over the train set: ' + str(mse_train))
 
     #Compute mean absolute error over all sequences
@@ -122,6 +128,7 @@ def run_experiment(p, csv_path, out_dir):
     plot_total_loss(model.loss['ll'], model.val_loss['ll'], "ll_loss", out_dir, "ll_loss.png") #Negative to see downard curve
 
     # Visualization of trajectories
+    """
     subj = 6
     feature = 12
 
@@ -132,14 +139,16 @@ def run_experiment(p, csv_path, out_dir):
     # For test
     plot_trajectory(X_test, X_test_hat, subj, 'all', out_dir, f'traj_test_s_{subj}_f_all') # testing for a given subject
     plot_trajectory(X_test, X_test_hat, subj, feature, out_dir, f'traj_test_s_{subj}_f_{feature}') # testing for a given feature
-
+    """
 
     z_train = X_train_fwd['z']
     z_test = X_test_fwd['z']
-    # select only the existing time points
-    z_test = [X[mask_test[:,i,:p["z_dim"]]].reshape((-1, p["z_dim"])) for (i, X) in enumerate(z_test)]
-    z_train = [X[mask_train[:,i,:p["z_dim"]]].reshape((-1, p["z_dim"])) for (i, X) in enumerate(z_train)]
 
+    # select only the existing time points
+    # Repeat the mask for each latent features, as we can have variable features, need to treat the mask
+    #Use ptile to repeat it as many times as p["z_dim"], and transpose it
+    z_test = [X[np.tile(mask_test[:,i,0], (p["z_dim"], 1)).T].reshape((-1, p["z_dim"])) for (i, X) in enumerate(z_test)]
+    z_train = [X[np.tile(mask_train[:,i,0], (p["z_dim"], 1)).T].reshape((-1, p["z_dim"])) for (i, X) in enumerate(z_train)]
     z = z_train + z_test
 
     # Dir for projections
@@ -151,7 +160,7 @@ def run_experiment(p, csv_path, out_dir):
     for dim0 in range(p["z_dim"]):
         for dim1 in range(dim0, p["z_dim"]):
             if dim0 == dim1: continue   # very dirty
-            plot_z_time_2d(z, p["ntp"], [dim0, dim1], out_dir + 'z_proj/', out_name=f'z_d{dim0}_d{dim1}')
+            plot_z_time_2d(z, p["ntp"], [dim0, dim1], out_dir + proj_path, out_name=f'z_d{dim0}_d{dim1}')
 
     # Dir for projections
     sampling_path = 'z_proj_dx/'
@@ -176,8 +185,29 @@ def run_experiment(p, csv_path, out_dir):
             plot_z_time_2d(z, p["ntp"], [dim0, dim1], out_dir + sampling_path, c='AGE', Y=Y, out_name=f'z_d{dim0}_d{dim1}')
 
 
+    # Compute MSE 
+    # Predict for max+1 and select only the positions that I am interested in
+    #this sequence predict DO NOT work well
+    Y_true = [p[-1, :] for p in X_train]
+    Y_pred = []
+
+    for i in range(X_train_pad.size(1)):
+        x = torch.FloatTensor(X_train[i][:-1,:])
+        x = x.unsqueeze(1)
+        tp = x.size(0) # max time points (and timepoint to predict)
+        if tp == 0:
+            continue
+        X_fwd = model.sequence_predict(x.to(DEVICE), tp+1)
+        X_hat = X_fwd['xnext']
+        Y_pred.append(X_hat[tp, 0, :]) #get predicted point
+                
+    #For each patient in X_hat, saveonly the timepoint that we want
+    #Compute mse
+    mse_predict = mean_squared_error(Y_true, Y_pred)
+    print('MSE over a future timepoint prediction: ' + str(mse_predict))
 
     # TODO: THIS SAMPLING PROCEDURE NEEDS TO BE UPDATED
+    """
     nt = len(X_train_pad)
     nsamples = 1000
     X_sample = model.sample_latent(nsamples, nt)
@@ -196,11 +226,12 @@ def run_experiment(p, csv_path, out_dir):
         for dim1 in range(dim0, p["z_dim"]):
             if dim0 == dim1: continue   # very dirty
             plot_z_time_2d(X_sample['z'], p["ntp"], [dim0, dim1], out_dir + 'z_proj_sampling/', out_name=f'z_d{dim0}_d{dim1}')
-
+    """
 
     loss = {
         "mse_train" : mse_train,
         "mse_test": mse_test,
+        "mse_predict": mse_predict,
         "loss_total": model.loss['total'][-1],
         "loss_kl": model.loss['kl'][-1],
         "loss_ll": model.loss['ll'][-1]
@@ -212,9 +243,8 @@ def run_experiment(p, csv_path, out_dir):
 if __name__ == "__main__":
     ### Parameter definition
     params = {
-        "x_size": 40,
-        "h_size": 10,
-        "z_dim": 5,
+        "h_size": 5,
+        "z_dim": 7,
         "hidden": 5,
         "n_layers": 1,
         "n_epochs": 1500,
@@ -224,6 +254,7 @@ if __name__ == "__main__":
         "seed": 1714,
     }
 
-    out_dir = "experiments/MRI_padding_lin/"
-    csv_path = "data/tadpole_mrionly.csv"
-    loss = run_experiment(params, csv_path, out_dir)
+    out_dir = "experiments/MRI_padding_lin_nomask/"
+    csv_path = "data/tadpole_cogonly.csv"
+    # csv_path = "data/tadpole_mrionly.csv"
+    loss = run_experiment(params, csv_path, out_dir, '_cog')

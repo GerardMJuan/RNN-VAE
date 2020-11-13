@@ -176,13 +176,10 @@ def plot_z_time_2d(z, max_timepoints, dims, out_dir, c='tp', Y=None, out_name='l
         if c == 'tp':
             color = color + [tp]*(len(z_d0))
         elif c == 'DX':
-            color = color + [dx_dict[x[tp]] for x in Y[c] if x.shape[0] > tp]
+            color = color + [dx_dict[y[tp]] for (x,y) in zip(z, Y[c]) if x.shape[0] > tp]
         else:
-            color = color + [x[tp] for x in Y[c] if x.shape[0] > tp]
+            color = color + [y[tp] for (x,y) in zip(z, Y[c]) if x.shape[0] > tp]
 
-    print(len(z_d0_full))
-    print(len(z_d1_full))
-    print(len(color))
     sns.scatterplot(x=z_d0_full,y=z_d1_full,hue=color, palette=pallete, s=60)
     ##Add title, x and y axis
     plt.xlabel(f"Dim {dim0}", size=13)

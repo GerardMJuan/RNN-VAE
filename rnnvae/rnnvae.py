@@ -231,13 +231,13 @@ class ModelRNNVAE(nn.Module):
         Does a single recurrent step, 
         but using sampling from the prior.
         
-        We do not have any x.
+        No need to do any kind of masking here.
         """
         # Sampling from the prior
         z_prior = self.prior(ht[-1])
         # test this
-        # z_t = self.sample_from(z_prior)
-        z_t = z_prior.rsample() #Hard sampling because we want variation
+        z_t = self.sample_from(z_prior)
+        # z_t = z_prior.rsample() #Hard sampling because we want variation
 
         # Apply phi_z
         phi_z_t = self.phi_z(z_t)
@@ -258,6 +258,7 @@ class ModelRNNVAE(nn.Module):
         Function that implements the forward pass 
         of a single recurrent step
         """
+
         ###PRIOR
         # RETURN THE PRIOR
         z_prior = self.prior(ht[-1])
@@ -287,6 +288,8 @@ class ModelRNNVAE(nn.Module):
         x = torch.cat([phi_zx_t, x_phi],1).unsqueeze(0)
         _, hnext = self.RNN(x, ht)
         
+        # Need to broadcast every output on to the original shape
+        #Rest, zeros or Nones
         return xnext, hnext, z_prior, zx_t, qzx_t, pxz_t
 
     def sample_latent(self, nsamples, nt):
@@ -339,6 +342,7 @@ class ModelRNNVAE(nn.Module):
         zp = []
         # ITERATE OVER THE SEQUENCE
         # and save intermediate results
+        #HERE, SELECT ONLY THE MASK CORRESPONDING TO THAT TIME POINT (MAYBE A ZIP?)
         for x_t in x:
             xnext, hnext, zp_t, zx_t, qzx_t, pxz_t = self.step(x_t, ht)
             #xnext or x_t?
@@ -378,7 +382,8 @@ class ModelRNNVAE(nn.Module):
                 zp = []
 
                 for t in range(nt):
-                    # If we have x information, we do a normal forward pass    
+                    # If we have x information, we do a normal forward pass   
+                    #   
                     if t < len(x):
                         x_t = x[t]
                         xnext, hnext, zp_t, z_t, _, pxz_t = self.step(x_t, ht)
@@ -399,21 +404,20 @@ class ModelRNNVAE(nn.Module):
                     'pxz': pxz,
                     'zp': zp
                 }
-
                 # Convert to numpy the xnext and the zx values
                 seq_pred['xnext'] = np.array([x.cpu().detach().numpy() for x in seq_pred["xnext"]])
                 seq_pred['z'] = np.array([x.cpu().detach().numpy() for x in seq_pred["z"]])
-                # self.sampling=False
+
                 return seq_pred
         raise RuntimeError('Model needs to be fit')
 
 
-    def fit_batch(self, x_batch):
+    def fit_batch(self, x_batch, mask):
         """
         Function to optimize a batch of sequences.
         """
         pred = self.forward(x_batch)
-        loss = self.loss_function(pred)
+        loss = self.loss_function(pred, mask)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -426,7 +430,6 @@ class ModelRNNVAE(nn.Module):
         We are predicting the exact reconstuction, and its latent space
         """
         self.eval()
-        
         if self.is_fitted:
             with torch.no_grad():
                 pred = self.forward(data)
@@ -439,13 +442,19 @@ class ModelRNNVAE(nn.Module):
         raise RuntimeError('Model needs to be fit')
 
 
-    def fit(self, data_train, data_val):
+    def fit(self, data_train, data_val, mask_train = None, mask_val=None):
         """
         Optimize full training.
         
-        Each epoch, we optimize over the data_train. After optimizing, we train over
-        the 
+        Each epoch, we optimize over the data_train.
+        mask train and mask_val are necessary to train with a variable number
+        of samples.  If they are none, we set them to the actual length of the 
+        data train and val objects.
         """
+        if mask_train is None:
+            mask_train = torch.ones(data_train.shape, dtype=torch.bool).to(self.device)
+        if mask_val is None:
+            mask_val = torch.ones(data_val.shape, dtype=torch.bool).to(self.device)
 
         for epoch in range(self.epochs):
 
@@ -461,17 +470,17 @@ class ModelRNNVAE(nn.Module):
                     if type(local_batch) is list:
                         local_batch = local_batch[0]
                     # Study well why this transpose and everything
-                    #Will probably be removed when using real data
-                    #Adding the loss per batch      
-                    loss = self.fit_batch(data_train)
+                    # Will probably be removed when using real data
+                    # Adding the loss per batch      
+                    loss = self.fit_batch(data_train, mask_train)
         
-                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm = self.clip)
+                    # torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm = self.clip)
                     current_batch += 1
 
                 self.loss = self.average_batch_loss(current_batch, self.loss)
 
             else:
-                loss = self.fit_batch(data_train)
+                loss = self.fit_batch(data_train, mask_train)
             
             # Check loss nan
             if np.isnan(loss):
@@ -494,7 +503,7 @@ class ModelRNNVAE(nn.Module):
                         #Will probably be removed when using real data
                         #Adding the loss per batch
                         pred = self.forward(data_val)
-                        loss = self.loss_function(pred)
+                        loss = self.loss_function(pred, mask_val)
 
                         current_batch += 1
 
@@ -502,7 +511,7 @@ class ModelRNNVAE(nn.Module):
 
                 else:
                     pred = self.forward(data_val)
-                    loss = self.loss_function(pred)
+                    loss = self.loss_function(pred, mask_val)
                     self.val_loss = self.save_loss(loss, self.val_loss)
 
             if epoch % self.print_every == 0:
@@ -524,12 +533,15 @@ class ModelRNNVAE(nn.Module):
         # KL divergence from Pytorch
         self.KL_fn = kl_divergence
 
-    def loss_function(self, fwd_return):
+    def loss_function(self, fwd_return, mask=None):
         """
         Full loss function, as described in the paper.
         Loss function uses loss from the various
-        times and stats
+        times and stats.
+
+        This loss function also needs to establish a mask.
         """
+
         x = fwd_return['x']
         qzx = fwd_return['qzx']
         pxz = fwd_return['pxz']
@@ -537,15 +549,26 @@ class ModelRNNVAE(nn.Module):
         kl = 0
         ll = 0
 
+        # Only compute loss for masked values.
         for i in range(len(x)):
+            #select mask for that time point
+            mask_i = mask[i][:, 0]
             # KL divergence
             #the second distribution is not the normal, is the prior!!
-            kl += self.KL_fn(qzx[i], zp[i]).sum(1).mean(0)
-            ll += pxz[i].log_prob(x[i]).sum(1).mean(0)
+            #sum over only the subjects that are in the mask
+            #do the mean only over the masks.
+            #for both
+            #and last dimensions is superfluous
+            kl_base = self.KL_fn(qzx[i], zp[i]).sum(1)
+            ll_base = pxz[i].log_prob(x[i]).sum(1)
+            kl_masked = torch.masked_select(kl_base, mask_i)
+            ll_masked = torch.masked_select(ll_base, mask_i)
+            kl += kl_masked.mean(0)
+            ll += ll_masked.mean(0)
 
         total = kl - ll
 
-        losses = {
+        losses = {      
             'total': total,
             'kl': kl,
             'll': ll

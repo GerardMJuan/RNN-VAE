@@ -17,4 +17,6 @@ module --ignore-cache load CUDA/10.2.89
 module --ignore-cache load cuDNN/7.6.5.32-CUDA-10.2.89
 source /homedtic/gmarti/pytorch/bin/activate 
 
-python scripts/metaexp_mri_pad.py
+#python scripts/metaexp_mri_pad.py
+#python scripts/metaexp_cort.py
+python scripts/metaexp_cog.py

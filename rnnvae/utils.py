@@ -30,6 +30,9 @@ def pandas_to_data_timeseries_var(df, feat, normalize=True, id_col = 'PTID'):
 
     for ptid in sample_list:
         i_list = df.index[df['PTID'] == ptid]
+        # OPCIONAL, PER PROVAR LO DE PREDICCIÓ
+        if len(i_list) < 2:
+            continue
         feats = df_feats.iloc[i_list].values
         X.append(feats)
 
@@ -69,7 +72,7 @@ def pandas_to_data_timeseries(df, feat, n_timesteps = 5, normalize=True, id_col 
     # Return numpy dataframe
     return X
 
-def open_MRI_data_var(csv_path, train_set = 0.8, normalize=True, return_covariates=False):
+def open_MRI_data_var(csv_path, train_set = 0.8, normalize=True, return_covariates=False, data_cols='mri_vol'):
     """
     Function to return a variable number of followups from a dataset
 
@@ -79,7 +82,7 @@ def open_MRI_data_var(csv_path, train_set = 0.8, normalize=True, return_covariat
     """
     data_df = pd.read_csv(csv_path)
 
-    mri_col = data_df.columns.str.contains("_mri_vol")
+    mri_col = data_df.columns.str.contains(data_cols)
     mri_col = data_df.columns[mri_col].values
 
     data_df = data_df.dropna(axis=0, subset=mri_col)
@@ -129,16 +132,16 @@ def open_MRI_data_var(csv_path, train_set = 0.8, normalize=True, return_covariat
         df_y_train["AGE"] = df_y_train["AGE_demog"] + df_y_train["Years_bl"]
         df_y_test["AGE"] = df_y_test["AGE_demog"] + df_y_test["Years_bl"] 
 
-        cov_cols = ["AGE", "VISCODE","AGE_demog","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
+        cov_cols = ["PTID", "AGE", "VISCODE","AGE_demog","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
         Y_train = {}
         Y_test = {}
         for col in cov_cols:
             Y_train[col] = pandas_to_data_timeseries_var(df_train, col, False)
             Y_test[col] = pandas_to_data_timeseries_var(df_test, col, False)
 
-        return X_train, X_test, Y_train, Y_test
+        return X_train, X_test, Y_train, Y_test, mri_col
 
-    return X_train, X_test
+    return X_train, X_test, mri_col
 
 
 def open_MRI_data(csv_path, train_set = 0.8, n_followups=5, normalize=True, return_covariates=False):
@@ -213,14 +216,14 @@ def open_MRI_data(csv_path, train_set = 0.8, n_followups=5, normalize=True, retu
         df_y_test["AGE"] = df_y_test["AGE_demog"] + df_y_test["Years_bl"] 
 
 
-        cov_cols = ["AGE", "VISCODE","AGE_demog","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
+        cov_cols = ["PTID", "AGE", "VISCODE","AGE_demog","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
         Y_train = {}
         Y_test = {}
         for col in cov_cols:
             Y_train[col] = pandas_to_data_timeseries(df_y_train, col, n_followups, False)
             Y_test[col] = pandas_to_data_timeseries(df_y_test, col, n_followups, False)
 
-        return X_train, X_test, Y_train, Y_test
+        return X_train, X_test, Y_train, Y_test, mri_col
 
 
-    return X_train, X_test
+    return X_train, X_test, mri_col

@@ -1,6 +1,8 @@
 """
 Auxiliar file to run a lot of experiments on a single experiments
 
+Using cognitive info data.
+
 """
 import os
 import sys
@@ -29,9 +31,9 @@ params_grid = {
 #Create two lists, that will store the dictionaries of the loss that later will become a dataframe
 list_loss = []
 
-csv_path = "data/tadpole_mrionly.csv"
+csv_path = "data/tadpole_cogonly.csv"
 
-base_out_dir = "experiments/meta_mri_noicv/"
+base_out_dir = "experiments/meta_cog/"
 
 if not os.path.exists(base_out_dir):
     os.makedirs(base_out_dir)
@@ -48,7 +50,7 @@ for p in ParameterGrid(params_grid):
     out_dir = f"{base_out_dir}_h_{h_size}_z_{z_dim}_hid_{hidden}_l_{n_layers}/"
     print("Running: " + out_dir)
     t = time.time()
-    loss = run_experiment(p, csv_path, out_dir)
+    loss = run_experiment(p, csv_path, out_dir, '_cog')
     sys.stdout = open(base_out_dir + 'general_output.out', 'w')
     elapsed = time.time() - t
     print('Time to run: %s' % str(timedelta(seconds=elapsed)))
