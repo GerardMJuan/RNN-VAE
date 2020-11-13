@@ -474,7 +474,7 @@ class ModelRNNVAE(nn.Module):
                     # Adding the loss per batch      
                     loss = self.fit_batch(data_train, mask_train)
         
-                    # torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm = self.clip)
+                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm = self.clip)
                     current_batch += 1
 
                 self.loss = self.average_batch_loss(current_batch, self.loss)

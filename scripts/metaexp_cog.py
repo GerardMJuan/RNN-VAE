@@ -33,7 +33,7 @@ list_loss = []
 
 csv_path = "data/tadpole_cogonly.csv"
 
-base_out_dir = "experiments/meta_cog/"
+base_out_dir = "experiments/meta_cog_clip/"
 
 if not os.path.exists(base_out_dir):
     os.makedirs(base_out_dir)
