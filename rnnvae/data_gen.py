@@ -10,7 +10,7 @@ import random
 
 class SinDataGenerator():
 
-    def __init__(self, curves, ntp, noise, variable_tp=False, equal_spacing=True):
+    def __init__(self, curves, ntp, noise, variable_tp=False):
         """
         Init the parameters and define the distribution
 
@@ -24,7 +24,6 @@ class SinDataGenerator():
         self.ntp = ntp
         self.noise = noise #scalar controlling the amount of gaussian noise
         self.variable_tp = variable_tp #boolean controlling if the number of timepoints is variable or not
-        self.equal_spacing = equal_spacing #boolean controlling if the samples over time are equally spaced or not
 
         self.curve_dict ={
             "cos": self.cosinus,

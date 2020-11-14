@@ -13,6 +13,8 @@ def pandas_to_data_timeseries_var(df, feat, normalize=True, id_col = 'PTID'):
     indicating the column of the subject ids, and column time to order them by time.
 
     The number of rows is variable, so we are creating a list of numpy arrays
+
+    This is generalizable for all type sof features
     """
     #Nuumber of samples
     sample_list = np.unique(df[id_col])
@@ -35,6 +37,87 @@ def pandas_to_data_timeseries_var(df, feat, normalize=True, id_col = 'PTID'):
 
     # Return numpy dataframe
     return X
+
+def load_multimodal_data(csv_path, suffixes_list, train_set = 0.8, normalize=True, return_covariates=False):
+    """
+    This function returns several types of data from a csv dataset in different channels.
+    Returns the data in the appropiate format, a list of different channels.
+
+    if train_set=1.0, there is no divide between train and test
+    channels is a list containing the suffixes of the columns of the original csv for that specific channel
+
+    The data needs to already be preprocessed.
+
+    """
+    data_df = pd.read_csv(csv_path)
+    test = True if train_set < 1.0 else False
+
+    X_train_full = []
+    X_test_full = []
+    col_lists = []
+
+    for suffix in suffixes_list:
+
+        cols = data_df.columns.str.contains(suffix)
+        cols = data_df.columns[cols].values
+        col_lists.append(cols)
+        #Aquests linies NO haurien de fer falta perquè ja hem assegurat que tots els Bl TINGUIN tal.
+        # data_df = data_df.dropna(axis=0, subset=cols)
+        #Drop columns where ptid do not have any bl
+        # data_df_bl = data_df[data_df.VISCODE == 'bl']       #select baselines
+        # ptid_with_bl = data_df_bl.PTID.unique()                #select which ptid have bl
+        # data_df = data_df[data_df.PTID.isin(ptid_with_bl)]  #remove the others
+
+        # Select only the subjects with nfollowups
+        ptid_list = np.unique(data_df["PTID"])
+
+        if test:
+            # Divide between test and train
+            from sklearn.model_selection import GroupShuffleSplit
+            gss = GroupShuffleSplit(n_splits=1, test_size=1.0-train_set)
+            train_dataset, test_dataset = next(gss.split(X=data_df, y=data_df.DX_bl.values, groups=data_df.PTID.values))
+
+            df_train = data_df.iloc[train_dataset]
+            df_test =  data_df.iloc[test_dataset]
+        else:
+            df_train = data_df
+
+        # Return the features in the correct shape (Nsamples, timesteps, nfeatures)
+        # Order the dataframes
+        df_train = df_train.sort_values(by=['PTID', 'Years_bl'], ascending=[True, True])
+        df_train = df_train.reset_index(drop=True)
+        X_train = pandas_to_data_timeseries_var(df_train, cols, normalize)
+        X_train_full.append(X_train)
+
+        if test: 
+            df_test = df_test.sort_values(by=['PTID', 'Years_bl'], ascending=[True, True])
+            df_test = df_test.reset_index(drop=True)
+            X_test = pandas_to_data_timeseries_var(df_test, cols, normalize)
+            X_test_full.append(X_test)
+        # Uncomment for debugging
+        #df_train.to_csv('train.csv')
+        #df_test.to_csv('test.csv')
+
+    ## Covariates can be calculated using the last value of  df_train
+    # Columns which contains covariates
+    if return_covariates:
+        Y_train = {}
+        Y_test = {}
+        #No need but whatever
+        df_y_train = df_train
+
+        if test: 
+            df_y_test = df_test
+
+        cov_cols = ["AGE_real_demog", "VISCODE","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
+
+        for col in cov_cols:
+            Y_train[col] = pandas_to_data_timeseries_var(df_train, col, False)
+            if test: Y_test[col] = pandas_to_data_timeseries_var(df_test, col, False)
+
+        return X_train_full, X_test_full, Y_train, Y_test, col_lists
+
+    return X_train_full, X_test_full, col_lists
 
 
 def pandas_to_data_timeseries(df, feat, n_timesteps = 5, normalize=True, id_col = 'PTID'):

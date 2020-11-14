@@ -172,7 +172,7 @@ def plot_z_time_2d(z, max_timepoints,dims, out_dir, out_name='latent_space_2d'):
     plt.close()
 
 
-def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text=None, all_plots=False, uncertainty=True, comp=None, savefig=False, out_dir=None):
+def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text=None, all_plots=False, uncertainty=True, comp=None, savefig=False, out_dir=None, mask=None):
     """
     Copied from MCVAE.
 
@@ -186,11 +186,13 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text
     parameter with the timepoint info OUTSIDE the tal.
 
     #Classificator should correspond to the length of the data and tp indicated.
+
+    The mask indicates the subjects that are present for that timepoint and channel, and as such, the ones that should be plotted.
     """
     sns.reset_defaults()    
     channels = len(qzx)
     comps = model.latent
-    #Not really used
+    if mask is not None: mask_ch = [mask_ch[t, :, 0] for mask_ch in mask]
 
     if classificator is not None:
         groups = np.unique(classificator)
@@ -216,16 +218,32 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text
                 ax.axis('off')
             elif i > j:
                 xi, xj, si, sj = (np.array([]) for i in range(4))
+
+                #Select the mask
+                if mask is not None: mask_ij = [mask_ch[t, :, 0] for mask_ch in mask]
+
                 # select only the timepoints needed
                 # We assume that all subjects have the same number of timepoints
                 for tp in range(max_tp):
                     if plt_tp != "all" and tp not in plt_tp:
                         continue
+                    xii = qzx[i][tp].loc.cpu().detach().numpy()[:, comp]
+                    xjj = qzx[j][tp].loc.cpu().detach().numpy()[:, comp]
+                    sii = qzx[i][tp].scale.cpu().detach().numpy()[:, comp]
+                    sjj = qzx[j][tp].scale.cpu().detach().numpy()[:, comp]
+                    #If we have mask, remove the points that, for that two channels, apply
+                    import pdb; pdb.set_trace()
+                    if mask is not None:
+                        xii = xii[mask_ij]
+                        xjj = xjj[mask_ij]
+                        sii = sii[mask_ij]
+                        sjj = sjj[mask_ij]
+
                     #Go subject by subject and append the information
-                    xi = np.append(xi, qzx[i][tp].loc.cpu().detach().numpy()[:, comp])
-                    xj = np.append(xj, qzx[j][tp].loc.cpu().detach().numpy()[:, comp])
-                    si = np.append(si, qzx[i][tp].scale.cpu().detach().numpy()[:, comp])
-                    sj = np.append(sj, qzx[j][tp].scale.cpu().detach().numpy()[:, comp])
+                    xi = np.append(xi, xii)
+                    xj = np.append(xj, xj)
+                    si = np.append(si, si)
+                    sj = np.append(sj, sj)
                 ells = [Ellipse(xy=[xi[p], xj[p]], width=2 * si[p], height=2 * sj[p]) for p in range(len(xi))]
                 if classificator is not None:
                     #For this to work, length of classificator must be equal to length of the timepoints and subjects 

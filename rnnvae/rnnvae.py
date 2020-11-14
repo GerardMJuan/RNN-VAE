@@ -32,18 +32,23 @@ from torch.distributions import Normal, kl_divergence
 import os
 
 # Functions
-def reconstruction_error(predicted, target):
-	#Full reconstruction error.
-	# sum over data dimensions (n_feats); average over observations (N_obs)
-	return ((target - predicted) ** 2).sum(1).mean(0)  # torch.Size([1])
+def reconstruction_error(predicted, target, mask):
+    #Full reconstruction error.
+    # sum over data dimensions (n_feats); average over observations (N_obs)
+    #Mask contains the subjects upon which we do not need to sum over
+    rec_aux = ((target - predicted) ** 2).sum(1)
+    rec_masked = torch.masked_select(rec_aux, mask)
+    return rec_masked.mean(0)
 
 
-def mae(predicted, target):
-	"""
-	Mean Absolute Error
-	"""
-	# sum over data dimensions (n_feats); average over observations (N_obs)
-	return torch.abs(target - predicted).sum(1).mean(0)  # torch.Size([1])
+def mae(predicted, target, mask):
+    """
+    Mean Absolute Error
+    """
+    # sum over data dimensions (n_feats); average over observations (N_obs)
+    mae_aux = torch.abs(target - predicted).sum(1)
+    mae_masked = torch.masked_select(mae_aux, mask)
+    return mae_masked.mean(0)  # torch.Size([1])
 
 def compute_log_alpha(mu, logvar):
     # clamp because dropout rate p in 0-99%, where p = alpha/(alpha+1)
@@ -188,7 +193,7 @@ class MCRNNVAE(nn.Module):
 
     def __init__(self, h_size, phi_x_hidden, phi_x_n, 
                  phi_z_hidden, phi_z_n, enc_hidden, enc_n, latent, dec_hidden, 
-                 dec_n, clip, nepochs, batch_size, n_channels, n_feats, model_name_dict, device,
+                 dec_n, clip, nepochs, batch_size, n_channels, n_feats, device, model_name_dict=None,
                  print_every=100):
 
         super().__init__()
@@ -217,10 +222,7 @@ class MCRNNVAE(nn.Module):
         self.batch_size = batch_size # we only use  this for loss visualization
         self.epochs = nepochs
 
-        #Init KL and loss
-        self.optimizer = None
-        self.init_KL()
-        self.init_loss()
+        self.sampling=False
 
         # init the names (copied from Luigis' code)
         self.init_names()
@@ -250,6 +252,11 @@ class MCRNNVAE(nn.Module):
             self.ch_RNN.append(nn.GRU(self.phi_x_hidden + self.phi_z_hidden, self.h_size, 1))
 
 
+        #Init KL and loss
+        self.optimizer = None
+        self.init_KL()
+        self.init_loss()
+
 
     def init_names(self):
         """
@@ -276,7 +283,7 @@ class MCRNNVAE(nn.Module):
         '''
         sampling by leveraging on the reparametrization trick
         '''
-        if self.training:
+        if self.training or self.sampling:
             zx = qzx.rsample()
         else:
             zx = qzx.loc
@@ -286,7 +293,7 @@ class MCRNNVAE(nn.Module):
     def step(self, xt_list, ht_list, sample=False, av_ch=None):
         """
         Function that implements the forward pass 
-        of a single recurrent step
+        of a single recurrent step for all the channels.
         """
         av_ch = range(self.n_channels) if av_ch is None else av_ch
         hnext_list = []
@@ -342,6 +349,7 @@ class MCRNNVAE(nn.Module):
         if sample:
             for ch in range(self.n_channels):
                 #If we are sampling, we need to obtain x_hat from the decoder
+                #TODO:QUESTION FOR MARCO is this the correct way to obtain the x_hat?
                 x_hat = torch.stack([pxz_t_list[e][ch].loc for e in av_ch]).mean(0)
                 x_phi = self.ch_phi_x[ch](x_hat)
 
@@ -398,12 +406,12 @@ class MCRNNVAE(nn.Module):
             'zp': zp
         }
 
-    def fit_batch(self, x_batch):
+    def fit_batch(self, x_batch, mask):
         """
         Function to optimize a batch of sequences.
         """
         pred = self.forward(x_batch)
-        loss = self.loss_function(pred)
+        loss = self.loss_function(pred, mask)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -415,6 +423,8 @@ class MCRNNVAE(nn.Module):
         Predict the reconstruction of some input.
         av_ch is the channels that we will be using for reconstruction. If its None, we just use all of them
         We are predicting the exact reconstuction, and its latent space
+
+        NEED TO LOOK INTO THIS FOR THE MC VARIABLE PART. CAN WE REALLY DO A FULL FORWARD PASS, OR WILL PROPAGATE ERRORS?
         """
         self.eval()
         av_ch = range(self.n_channels) if av_ch is None else av_ch
@@ -449,6 +459,8 @@ class MCRNNVAE(nn.Module):
                     ht = hnext
 
                 # For xnext, we need to obtain the average of the reconstruction across channels and timepoints
+                # THIS IS THE PART where we need to take into account the mask. We cannot reconstruct from missing channels,
+                # as that value is WRONG and we are doing the reconstruction wrong. THIS NEEDS TO BE TAKEN INTO ACCOUNT
                 X_hat = [[] for _ in range(self.n_channels)]
                 for i in range(self.n_channels):
                     for t in range(nt):
@@ -469,7 +481,7 @@ class MCRNNVAE(nn.Module):
         
         raise RuntimeError('Model needs to be fit')
 
-    def fit(self, data_train, data_val):
+    def fit(self, data_train, data_val, mask_train=None, mask_val=None):
         """
         Optimize full training.
         
@@ -478,7 +490,14 @@ class MCRNNVAE(nn.Module):
 
         Data is of the form
         (nt, nch, nbatch, feat)
+
+        The mask indicates, for each channel, the existence of that sample or not, to take it into
+        account when computing the loss.
         """
+        if mask_train is None:
+            mask_train = [torch.ones(x.shape, dtype=torch.bool).to(self.device) for x in data_train]
+        if mask_val is None:
+            mask_val = [torch.ones(x.shape, dtype=torch.bool).to(self.device) for x in data_val]
 
         for epoch in range(self.epochs):
 
@@ -496,16 +515,15 @@ class MCRNNVAE(nn.Module):
                     # Study well why this transpose and everything
                     #Will probably be removed when using real data
                     #Adding the loss per batch      
-                    loss = self.fit_batch(data_train)
+                    loss = self.fit_batch(data_train, mask_train)
         
-                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm = self.clip)
                     current_batch += 1
 
                 self.loss = self.average_batch_loss(current_batch, self.loss)
 
             else:
-                loss = self.fit_batch(data_train)
-            
+                loss = self.fit_batch(data_train, mask_train)
+                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm = self.clip)
             # Check loss nan
             if np.isnan(loss):
                 print('Loss is nan!')
@@ -527,7 +545,7 @@ class MCRNNVAE(nn.Module):
                         #Will probably be removed when using real data
                         #Adding the loss per batch
                         pred = self.forward(data_val)
-                        loss = self.loss_function(pred)
+                        loss = self.loss_function(pred, mask_val)
 
                         current_batch += 1
 
@@ -535,7 +553,7 @@ class MCRNNVAE(nn.Module):
 
                 else:
                     pred = self.forward(data_val)
-                    loss = self.loss_function(pred)
+                    loss = self.loss_function(pred, mask_val)
                     self.val_loss = self.save_loss(loss, self.val_loss)
 
             if epoch % self.print_every == 0:
@@ -558,12 +576,14 @@ class MCRNNVAE(nn.Module):
         self.KL_fn = kl_divergence
 
 
-    def loss_function(self, fwd_return):
+    def loss_function(self, fwd_return, mask=None):
         """
         Full loss function, as described in the paper.
 
         This is a multi-channel loss: we compute all the losses
         across the different channels.
+
+        The mask should have the same shape as x
         """
         X = fwd_return['x']
         qzx = fwd_return['qzx']
@@ -575,15 +595,27 @@ class MCRNNVAE(nn.Module):
         # For each time point,
         for t in range(X[0].size(0)):
             x = [x_ch[t, :, :] for x_ch in X]
+            mask_i = [mask_ch[t, :, 0] for mask_ch in mask]
+
             for i in range(self.n_channels):
                 # KL divergence
                 #the second distribution is not the normal, is the prior!!
-                kl += self.KL_fn(qzx[i][t], zp[i][t]).sum(1).mean(0)
+                kl_base = self.KL_fn(qzx[i][t], zp[i][t]).sum(1)
+                # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
+                if not torch.sum(mask_i[i]) == 0:
+                    kl_masked = torch.masked_select(kl_base, mask_i[i])
+                    kl += kl_masked.mean(0)
 
                 for j in range(self.n_channels):
                     # i = latent comp; j = decoder
                     # Direct (i=j) and Crossed (i!=j) Log-Likelihood
-                    ll += pxz[i][t][j].log_prob(x[j]).sum(1).mean(0)
+                    ll_base = pxz[i][t][j].log_prob(x[j]).sum(1)
+                    # compute the combined mask for both inputs
+                    combined_mask = torch.logical_and(mask_i[i], mask_i[j]) 
+                    # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
+                    if not torch.sum(combined_mask) == 0:
+                        ll_masked = torch.masked_select(ll_base, combined_mask)
+                        ll += ll_masked.mean(0)
 
         total = kl - ll
 
@@ -600,7 +632,7 @@ class MCRNNVAE(nn.Module):
             return losses
 
 
-    def recon_loss(self, fwd_return, target=None):
+    def recon_loss(self, fwd_return, target=None, mask=None):
         """ 
         Reconstruction loss.
 
@@ -608,16 +640,22 @@ class MCRNNVAE(nn.Module):
         from a target
         This function is not supposed to be used in the interior
         """
+
         X = fwd_return['x'] if target is None else target
         pxz = fwd_return['pxz']
         zp = fwd_return['zp']
+
+        if mask is None:
+            mask = [torch.ones(x.shape, dtype=torch.bool).to(self.device) for x in X]
 
         rec_loss = 0
         mae_loss = 0
         # For each time point,
         for t in range(X[0].shape[0]):
             # Convert to tensor for calculations, if its not a tensor
-            x = [torch.FloatTensor(x_ch[t, :, :]).to(self.device) for x_ch in X]
+            x = [x_ch[t, :, :] for x_ch in X]
+            mask_ch = [mask_ch[t, :, 0] for mask_ch in mask]
+
             for i in range(self.n_channels):
                 # KL divergence
                 #the second distribution is not the normal, is the prior!!
@@ -625,8 +663,11 @@ class MCRNNVAE(nn.Module):
                 for j in range(self.n_channels):
                     # i = latent comp; j = decoder
                     # Direct (i=j) and Crossed (i!=j) Log-Likelihood
-                    rec_loss += reconstruction_error(target=x[j], predicted=pxz[i][t][j].loc)
-                    mae_loss += mae(target=x[j], predicted=pxz[i][t][j].loc)
+                    # we only count the mae and reconstructions that exist!!
+                    combined_mask = torch.logical_and(mask_ch[i], mask_ch[j])
+                    if not torch.sum(combined_mask) == 0:
+                        rec_loss += reconstruction_error(target=x[j], predicted=pxz[i][t][j].loc, mask=combined_mask)
+                        mae_loss += mae(target=x[j], predicted=pxz[i][t][j].loc, mask=combined_mask)
 
         losses = {
             'rec_loss': rec_loss.item(),
