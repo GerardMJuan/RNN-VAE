@@ -33,7 +33,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     np.random.seed(p["seed"])
 
     #Redirect output to the out dir
-    # sys.stdout = open(out_dir + 'output.out', 'w')
+    sys.stdout = open(out_dir + 'output.out', 'w')
 
 
     #save parameters to the out dir 
@@ -74,6 +74,8 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
                             p["clip"], p["n_epochs"], p["batch_size"], 
                             p["n_channels"], p["n_feats"], DEVICE)
 
+    model.ch_name = p["ch_names"]
+
     optimizer = torch.optim.Adam(model.parameters(), lr=p["learning_rate"])
     model.optimizer = optimizer
 
@@ -106,8 +108,14 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
     ##Latent spasce
     #Reformulate things
-    z_train = [np.array(x).swapaxes(0,1) for x in X_train_fwd['z']]
-
+    #z_train = [np.array(x).swapaxes(0,1) for x in X_train_fwd['z']]
+    # IT DOESNT WORK RIGHT NOW
+    # Not needed rn
+    # z_train = []
+    #for (i, z_ch) in enumerate(X_train_fwd['z']):
+    #    mask_ch = mask_train_list[i].cpu().numpy()
+    #    z_train.append([X[np.tile(mask_ch[:,j,0], (p["z_dim"], 1)).T].reshape((-1, p["z_dim"])) for (j, X) in enumerate(z_ch)])
+    
     # X_test_hat = [X[mask_test[:,i,:]].reshape((-1, nfeatures)) for (i, X) in enumerate(X_test_hat)]
 
     # z_test = [np.array(x).swapaxes(0,1) for x in X_test_fwd['z']]
@@ -119,31 +127,62 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         os.makedirs(out_dir + proj_path)
 
     #plot latent space for ALL the 
-    for ch in range(p["n_channels"]):
-        for dim0 in range(p["z_dim"]):
-            for dim1 in range(dim0, p["z_dim"]):
-                if dim0 == dim1: continue   # very dirty
-                plot_z_time_2d(z_train[ch], ntp, [dim0, dim1], out_dir + proj_path, out_name=f'z_ch_{ch}_d{dim0}_d{dim1}')
-
-    # Dir for projections
-    sampling_path = 'z_proj_sampling/'
-    if not os.path.exists(out_dir + sampling_path):
-        os.makedirs(out_dir + sampling_path)
+    #Por plotting the latent space, we need to do a similar function to plot_latent_space. Wait, that directly does it
+    #for ch in range(p["n_channels"]):
+    #    for dim0 in range(p["z_dim"]):
+    #        for dim1 in range(dim0, p["z_dim"]):
+    #            if dim0 == dim1: continue   # very dirty
+    #            plot_z_time_2d(z_train[ch], ntp, [dim0, dim1], out_dir + proj_path, out_name=f'z_ch_{ch}_d{dim0}_d{dim1}')
 
     # Test the new function of latent space
     #NEED TO ADAPT THIS FUNCTION
     qzx = [np.array(x) for x in X_train_fwd['qzx']]
-
+    print('len qzx')
+    print(len(qzx))
     # Get classificator labels, for n time points
-    out_dir_sample = out_dir + 'test_zspace_function/'
+    out_dir_sample = out_dir + 'zcomp_ch_dx/'
     if not os.path.exists(out_dir_sample):
         os.makedirs(out_dir_sample)
 
-    plot_latent_space(model, qzx, p["ntp"], classificator=classif, plt_tp='all',
-                    all_plots=False, uncertainty=True, savefig=True, out_dir=out_dir_sample, mask=mask_train_list)
+    dx_dict = {
+        "NL": "CN",
+        "MCI": "MCI",
+        "MCI to NL": "CN",
+        "Dementia": "AD",
+        "Dementia to MCI": "MCI",
+        "NL to MCI": "MCI",
+        "NL to Dementia": "AD",
+        "MCI to Dementia": "AD"
+    }
+    #Convert to standard
+    #Add padding so that the mask also works here
+    DX = [[dx_dict[x] for x in elem] for elem in Y_train["DX"]]
+
+    plot_latent_space(model, qzx, ntp, classificator=DX, plt_tp='all',
+                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample, mask=mask_train_list)
+
+    out_dir_sample_t0 = out_dir + 'zcomp_ch_dx_t0/'
+    if not os.path.exists(out_dir_sample_t0):
+        os.makedirs(out_dir_sample_t0)
+
+
+    plot_latent_space(model, qzx, ntp, classificator=DX, plt_tp=[0],
+                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample_t0, mask=mask_train_list)
+
+
+    # Now plot color by timepoint
+    out_dir_sample = out_dir + 'zcomp_ch_tp/'
+    if not os.path.exists(out_dir_sample):
+        os.makedirs(out_dir_sample)
+
+    classif = [[i for (i, x) in enumerate(elem)] for elem in Y_train["DX"]]
+
+    plot_latent_space(model, qzx, ntp, classificator=classif, plt_tp='all',
+                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample, mask=mask_train_list)
 
     loss = {
         "mse_train" : train_loss["mae"],
+        "rec_train" : train_loss["rec_loss"],
         # "mse_test": test_loss["mae"],
         "loss_total": model.loss['total'][-1],
         "loss_kl": model.loss['kl'][-1],
@@ -157,10 +196,11 @@ if __name__ == "__main__":
     ### Parameter definition
 
     channels = ['_mri_vol','_mri_cort','_demog','_apoe', '_cog', '_fluid','_fdg','_av45']
+    names = ["MRI vol", "MRI cort", "Demog", "APOE", "Cog", "Fluid", "FDG", "AV45"]
 
     params = {
         "h_size": 32,
-        "z_dim": 10,
+        "z_dim": 5,
         "hidden": 64,
         "n_layers": 1,
         "n_epochs": 20,
@@ -169,6 +209,7 @@ if __name__ == "__main__":
         "batch_size": 128,
         "seed": 1714,
         "n_channels": len(channels),
+        "ch_names" : names
     }
 
     out_dir = "experiments_mc/MRI_ADNI_first/"
