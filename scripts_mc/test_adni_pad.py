@@ -14,7 +14,7 @@ from rnnvae import rnnvae
 from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
 from sklearn.metrics import mean_squared_error
-
+import seaborn as sns
 
 def run_experiment(p, csv_path, out_dir, data_cols=[]):
     """
@@ -33,8 +33,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     np.random.seed(p["seed"])
 
     #Redirect output to the out dir
-    sys.stdout = open(out_dir + 'output.out', 'w')
-
+    # sys.stdout = open(out_dir + 'output.out', 'w')
 
     #save parameters to the out dir 
     with open(out_dir + "params.txt","w") as f:
@@ -158,15 +157,21 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     #Add padding so that the mask also works here
     DX = [[dx_dict[x] for x in elem] for elem in Y_train["DX"]]
 
-    plot_latent_space(model, qzx, ntp, classificator=DX, plt_tp='all',
+    #Define colors
+    pallete_dict = {
+        "CN": "#2a9e1e",
+        "MCI": "#bfbc1a",
+        "AD": "#af1f1f"
+    }
+
+    plot_latent_space(model, qzx, ntp, classificator=DX, pallete_dict=pallete_dict, plt_tp='all',
                     all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample, mask=mask_train_list)
 
     out_dir_sample_t0 = out_dir + 'zcomp_ch_dx_t0/'
     if not os.path.exists(out_dir_sample_t0):
         os.makedirs(out_dir_sample_t0)
 
-
-    plot_latent_space(model, qzx, ntp, classificator=DX, plt_tp=[0],
+    plot_latent_space(model, qzx, ntp, classificator=DX, pallete_dict=pallete_dict, plt_tp=[0],
                     all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample_t0, mask=mask_train_list)
 
 
@@ -176,8 +181,10 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         os.makedirs(out_dir_sample)
 
     classif = [[i for (i, x) in enumerate(elem)] for elem in Y_train["DX"]]
+    pallete = sns.color_palette("viridis", ntp)
+    pallete_dict = {i:value for (i, value) in enumerate(pallete)}
 
-    plot_latent_space(model, qzx, ntp, classificator=classif, plt_tp='all',
+    plot_latent_space(model, qzx, ntp, classificator=classif, pallete_dict=pallete_dict, plt_tp='all',
                     all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample, mask=mask_train_list)
 
     loss = {

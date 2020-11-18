@@ -190,7 +190,7 @@ def plot_z_time_2d(z, max_timepoints, dims, out_dir, c='tp', Y=None, out_name='l
     plt.savefig(f'{out_dir}/{out_name}.png')
     plt.close()
 
-def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text=None, all_plots=False, uncertainty=True, comp=None, savefig=False, out_dir=None, mask=None):
+def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None, plt_tp='all', text=None, all_plots=False, uncertainty=True, comp=None, savefig=False, out_dir=None, mask=None):
     """
     Copied from MCVAE.
 
@@ -210,7 +210,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text
     sns.reset_defaults()    
     channels = len(qzx)
     comps = model.latent
-
+    
     if classificator is not None:
         groups = np.unique([item for elem in classificator for item in elem])
 
@@ -271,13 +271,13 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text
                 
                 ells = [Ellipse(xy=[xi[p], xj[p]], width=2 * si[p], height=2 * sj[p]) for p in range(len(xi))]
                 if classificator is not None:
-                    #For this to work, length of classificator must be equal to length of the timepoints and subjects 
+                    #For this to work, length of classificator must be equal to length of the timepoints and subjects
                     for g in groups:
                         if mask is not None:
                             g_idx = classificator_masked == g
                         else:
                             g_idx = classificator == g
-                        ax.plot(xi[g_idx], xj[g_idx], '.', alpha=0.75, markersize=15, markeredgecolor='k', markeredgewidth=0.5)
+                        ax.plot(xi[g_idx], xj[g_idx], '.', color=pallete_dict[g], alpha=0.75, markersize=12, markeredgecolor='k', markeredgewidth=0.5)
                         if uncertainty:
                             color = ax.get_lines()[-1].get_color()
                             for idx in np.where(g_idx)[0]:
@@ -301,7 +301,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text
                 ax.axis('off')
         if classificator is not None:
             # groups = sorted(groups, key=lambda t: int(t))
-            [axs[-1, 0].plot(0,0) for g in groups]
+            [axs[-1, 0].plot(0,0, color=pallete_dict[g]) for g in groups]
             # legend = ['{} (n={})'.format(g, len(classificator[classificator==g])) for g in groups]
             legend = ['{}'.format(g) for g in groups]
             axs[-1,0].legend(legend)
@@ -350,7 +350,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text
                                 # select the color from the timepoints and the subjects specified
                                 # there will be no problem with tp > len(color) as we have already selected
                                 # subjects with that tp with mask_ij
-                                clf_mask = [color[tp] for idx, color in enumerate(classificator) if mask_ij[idx]]
+                                clf_mask = [label[tp] for idx, label in enumerate(classificator) if mask_ij[idx]]
                                 classificator_masked = np.append(classificator_masked, np.array(clf_mask))
 
                         xi = np.append(xi, xii)
@@ -361,7 +361,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text
                                 g_idx = classificator_masked == g
                             else:
                                 g_idx = classificator == g
-                            axs[j, i].plot(xi[g_idx], xj[g_idx], '.',alpha=0.75, markersize=15, markeredgecolor='k', markeredgewidth=0.5)
+                            axs[j, i].plot(xi[g_idx], xj[g_idx], '.', color=pallete_dict[g], alpha=0.75, markersize=15, markeredgecolor='k', markeredgewidth=0.5)
                     else:
                         axs[j, i].plot(xi, xj, '.')
                         
@@ -372,7 +372,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, plt_tp='all', text
                     axs[j, i].axis('off')
             if classificator is not None:
                 # groups = sorted(groups, key=lambda t: int(t))
-                [axs[-1, 0].plot(0,0) for g in groups]
+                [axs[-1, 0].plot(0,0, color=pallete_dict[g]) for g in groups]
                 legend = ['{}'.format(g) for g in groups]
                 axs[-1,0].legend(legend)
 
