@@ -423,6 +423,39 @@ class ModelRNNVAE(nn.Module):
         self.optimizer.step()
         return loss.detach().item()
 
+    def reconstruct(self, z):
+        """
+        Function to do a reconstruction from a set of latent samples.
+        
+        z should have a shape of (ntp, samples, features)
+        will return X using the same shape
+
+        Our path will be to reconstruct the input from all the z
+
+        """
+        ht = Variable(torch.zeros(1, z.size(1), self.h_size, device=self.device))
+        x_pred = []
+
+        #For each timepiont, reconstruct
+        for z_t in z:
+            #Apply phi_z
+            phi_z_t = self.phi_z(z_t)
+
+            ### DECODER
+            x = torch.cat([phi_z_t, ht[-1]], 1)
+            pxz_t = self.decoder(x)
+
+            #Sample from
+            # xnext = self.sample_from(pxz_t)
+            x_hat = pxz_t.loc
+            x_hat_phi = self.phi_x(x_hat)
+            ### RNN
+            x = torch.cat([phi_z_t, x_hat_phi],1).unsqueeze(0)
+            _, ht = self.RNN(x, ht)
+            x_pred.append(x_hat)
+
+        x_pred = np.array([x.cpu().detach().numpy() for x in x_pred])
+        return x_pred
 
     def predict(self, data):
         """
