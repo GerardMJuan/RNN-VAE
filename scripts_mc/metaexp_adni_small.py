@@ -16,11 +16,11 @@ channels = ['_mri_vol','_mri_cort', '_cog']
 names = ["MRI vol", "MRI cort", "Cog"]
 
 params = {
-    "h_size": [40,60,80,100],
-    "z_dim": [5,6,7,8],
-    "hidden": [40,60,80,100],
-    "n_layers": [1,2],
-    "n_epochs": [1000],
+    "h_size": [60,80,100,150,200],
+    "z_dim": [5,10,15,20],
+    "hidden": [60,100,150,200],
+    "n_layers": [1],
+    "n_epochs": [1500],
     "clip": [10],
     "learning_rate": [1e-3],
     "batch_size": [128],
