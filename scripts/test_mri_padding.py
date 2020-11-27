@@ -14,6 +14,7 @@ from rnnvae.utils import open_MRI_data_var
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_many_trajectories
 from sklearn.metrics import mean_squared_error
 
+
 def run_experiment(p, csv_path, out_dir, data_cols='_mri_vol'):
     """
     Function to run the experiments.
