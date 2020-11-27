@@ -125,18 +125,30 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     ## Prediction of last time point
 
     # Test data without last timepoint
+    for x_ch in X_test:
+        X_test_tensor = [ torch.FloatTensor(t) for t in x_ch]
+        X_test_pad = nn.utils.rnn.pad_sequence(X_test_tensor, batch_first=False, padding_value=np.nan)
+        mask_test = ~torch.isnan(X_test_pad)
+        mask_test_list.append(mask_test.to(DEVICE))
+        X_test_pad[torch.isnan(X_test_pad)] = 0
+        X_test_list.append(X_test_pad.to(DEVICE))
 
     # Run prediction
+    X_train_fwd_pred = model.predict(X_train_list, nt=ntp-1)
 
     #Compute MCVAE over last timepoint
 
     ## Test reconstruction over all channels.
 
     # For each channel
+    for i in range(len(X_test_list)):
+        av_ch = range(len(X_test_list))
+        av_ch.remove(i)
+        # try to reconstruct it from the other ones
+        ch_recon = model.predict(X_test_list, nt=ntp, av_ch=av_ch)
 
-    # try to reconstruct it from the other ones
-
-    # Get result
+        # Get mcvae result for that specific channel
+        
 
 
     # Dir for projections
