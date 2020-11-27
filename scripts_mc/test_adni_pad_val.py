@@ -142,13 +142,13 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
     # For each channel
     for i in range(len(X_test_list)):
-        av_ch = range(len(X_test_list))
+        av_ch = list(range(len(X_test_list)))
         av_ch.remove(i)
         # try to reconstruct it from the other ones
         ch_recon = model.predict(X_test_list, nt=ntp, av_ch=av_ch)
 
         # Get mcvae result for that specific channel
-        
+
 
 
     # Dir for projections
