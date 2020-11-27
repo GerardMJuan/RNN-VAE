@@ -5,7 +5,7 @@ Auxiliar file to run a lot of experiments on a single file
 import os
 import sys
 sys.path.insert(0, os.path.abspath('./'))
-from test_adni_pad import run_experiment
+from test_adni_pad_val import run_experiment
 from sklearn.model_selection import ParameterGrid
 import configparser
 import time
@@ -16,11 +16,11 @@ channels = ['_mri_vol','_mri_cort', '_cog']
 names = ["MRI vol", "MRI cort", "Cog"]
 
 params = {
-    "h_size": [60,80,100,150,200],
-    "z_dim": [5,10,15,20],
-    "hidden": [60,100,150,200],
+    "h_size": [50,75,100],
+    "z_dim": [5,6,7,10],
+    "hidden": [50,75,100],
     "n_layers": [1],
-    "n_epochs": [1500],
+    "n_epochs": [1000],
     "clip": [10],
     "learning_rate": [1e-3],
     "batch_size": [128],
@@ -34,7 +34,7 @@ csv_path = "data/multimodal_no_petfluid.csv"
 #Create two lists, that will store the dictionaries of the loss that later will become a dataframe
 list_loss = []
 
-base_out_dir = "experiments_mc/meta_ADNI_padding_small/"
+base_out_dir = "experiments_mc/meta_ADNI_padding_small_nophi/"
 
 if not os.path.exists(base_out_dir):
     os.makedirs(base_out_dir)

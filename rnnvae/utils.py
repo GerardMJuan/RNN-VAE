@@ -50,11 +50,33 @@ def load_multimodal_data(csv_path, suffixes_list, train_set = 0.8, normalize=Tru
 
     """
     data_df = pd.read_csv(csv_path)
+
+    dx_dict = {
+        "NL": "CN",
+        "MCI": "MCI",
+        "MCI to NL": "CN",
+        "Dementia": "AD",
+        "Dementia to MCI": "MCI",
+        "NL to MCI": "MCI",
+        "NL to Dementia": "AD",
+        "MCI to Dementia": "AD"
+    }
+
+    data_df['DX'] = data_df['DX'].map(dx_dict)
+    data_df = data_df.sort_values(by=['PTID', 'Years_bl'], ascending=[True, True])
+
     test = True if train_set < 1.0 else False
 
     X_train_full = []
     X_test_full = []
     col_lists = []
+
+    if test:
+        from sklearn.model_selection import GroupShuffleSplit, ShuffleSplit, StratifiedShuffleSplit
+        gss = ShuffleSplit(n_splits=1, test_size=1.0-train_set)
+        train_dataset, test_dataset = next(gss.split(X=data_df[data_df.VISCODE=='bl'].PTID.values, y=data_df[data_df.VISCODE=='bl'].DX.values))
+        train_ptid = data_df[data_df.VISCODE=='bl'].PTID.values[train_dataset]
+        test_ptid = data_df[data_df.VISCODE=='bl'].PTID.values[test_dataset]
 
     for suffix in suffixes_list:
 
@@ -62,36 +84,36 @@ def load_multimodal_data(csv_path, suffixes_list, train_set = 0.8, normalize=Tru
         cols = data_df.columns[cols].values
         col_lists.append(cols)
         #Aquests linies NO haurien de fer falta perquè ja hem assegurat que tots els Bl TINGUIN tal.
-        # data_df = data_df.dropna(axis=0, subset=cols)
+        data_df_base = data_df.dropna(axis=0, subset=cols)
+        data_df_base = data_df_base.reset_index(drop=True)
+
         #Drop columns where ptid do not have any bl
         # data_df_bl = data_df[data_df.VISCODE == 'bl']       #select baselines
         # ptid_with_bl = data_df_bl.PTID.unique()                #select which ptid have bl
         # data_df = data_df[data_df.PTID.isin(ptid_with_bl)]  #remove the others
 
         # Select only the subjects with nfollowups
-        ptid_list = np.unique(data_df["PTID"])
+        ptid_list = np.unique(data_df_base["PTID"])
 
         if test:
             # Divide between test and train
-            from sklearn.model_selection import GroupShuffleSplit
-            gss = GroupShuffleSplit(n_splits=1, test_size=1.0-train_set)
-            train_dataset, test_dataset = next(gss.split(X=data_df, y=data_df.DX_bl.values, groups=data_df.PTID.values))
+            df_train = data_df_base[data_df_base.PTID.isin(train_ptid)]
+            df_test = data_df_base[data_df_base.PTID.isin(test_ptid)]
 
-            df_train = data_df.iloc[train_dataset]
-            df_test =  data_df.iloc[test_dataset]
+            df_train = df_train.reset_index(drop=True)
+            df_test = df_test.reset_index(drop=True)
+
+            # df_train = data_df.iloc[train_dataset]
+            #df_test =  data_df.iloc[test_dataset]
         else:
-            df_train = data_df
+            df_train = data_df_base
 
         # Return the features in the correct shape (Nsamples, timesteps, nfeatures)
         # Order the dataframes
-        df_train = df_train.sort_values(by=['PTID', 'Years_bl'], ascending=[True, True])
-        df_train = df_train.reset_index(drop=True)
         X_train = pandas_to_data_timeseries_var(df_train, cols, normalize)
         X_train_full.append(X_train)
 
         if test: 
-            df_test = df_test.sort_values(by=['PTID', 'Years_bl'], ascending=[True, True])
-            df_test = df_test.reset_index(drop=True)
             X_test = pandas_to_data_timeseries_var(df_test, cols, normalize)
             X_test_full.append(X_test)
         # Uncomment for debugging
@@ -103,13 +125,19 @@ def load_multimodal_data(csv_path, suffixes_list, train_set = 0.8, normalize=Tru
     if return_covariates:
         Y_train = {}
         Y_test = {}
-        #No need but whatever
-        df_y_train = df_train
-
-        if test: 
-            df_y_test = df_test
 
         cov_cols = ["AGE_real_demog", "VISCODE","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
+
+        if test:
+            # Divide between test and train
+            df_train = data_df[data_df.PTID.isin(train_ptid)]
+            df_test = data_df[data_df.PTID.isin(test_ptid)]
+
+            df_train = df_train.reset_index(drop=True)
+            df_test = df_test.reset_index(drop=True)
+
+        else:
+            df_train = data_df
 
         for col in cov_cols:
             Y_train[col] = pandas_to_data_timeseries_var(df_train, col, False)

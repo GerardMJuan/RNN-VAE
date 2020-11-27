@@ -237,12 +237,6 @@ class MCRNNVAE(nn.Module):
         self.ch_RNN = nn.ModuleList() #LIST OF RNN BLOCK
 
         for ch in range(self.n_channels): 
-
-            ###COMMENT OUT WHEN USING THE PHI LAYERS
-            self.phi_x_hidden = self.nfeats[ch] 
-            self.phi_z_hidden = self.latent
-            #########################################
-
             ## PRIOR 
             self.ch_priors.append(VariationalBlock(self.h_size, self.enc_hidden, self.latent, self.enc_n))
 
@@ -318,8 +312,7 @@ class MCRNNVAE(nn.Module):
             if not sample:
                 #If we are not sampling from the prior, we have an input value
                 xt = xt_list[ch]
-                # x_phi = self.ch_phi_x[ch](xt) # Input transformation
-                x_phi = xt  #If we dont want to use the input transformation
+                x_phi = self.ch_phi_x[ch](xt) # Input transformation
                 x = torch.cat([x_phi, ht[-1]], 1) # append input with hidden
                 qzx_t = self.ch_enc[ch](x) # Run through the encoder
                 z_t = self.sample_from(qzx_t) #Sample from q(z|x)
@@ -330,8 +323,7 @@ class MCRNNVAE(nn.Module):
                 z_t = self.sample_from(z_prior) #sample from the prior
 
             #Apply phi_z
-            # phi_zx_t = self.ch_phi_z[ch](z_t)
-            phi_zx_t = z_t
+            phi_zx_t = self.ch_phi_z[ch](z_t)
             phi_zx_list.append(phi_zx_t)  # In the sampling moment, it is necessary
 
             #Decoder, for each separate channel
@@ -357,9 +349,9 @@ class MCRNNVAE(nn.Module):
         if sample:
             for ch in range(self.n_channels):
                 #If we are sampling, we need to obtain x_hat from the decoder
+                #TODO:QUESTION FOR MARCO is this the correct way to obtain the x_hat?
                 x_hat = torch.stack([pxz_t_list[e][ch].loc for e in av_ch]).mean(0)
-                #x_phi = self.ch_phi_x[ch](x_hat)
-                x_phi = x_hat
+                x_phi = self.ch_phi_x[ch](x_hat)
 
                 x = torch.cat([phi_zx_list[ch], x_phi],1).unsqueeze(0)
                 _, hnext = self.ch_RNN[ch](x, ht) # Recurrence step

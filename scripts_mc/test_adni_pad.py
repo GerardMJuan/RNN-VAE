@@ -65,7 +65,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         X_train_pad[torch.isnan(X_train_pad)] = 0
         X_train_list.append(X_train_pad.to(DEVICE))
 
-    ntp = X_train_list[0].shape[0]
+    ntp = max([X_train_list[i].shape[0] for i in range(len(X_train_list))])
 
     model = rnnvae.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
                             p["hidden"], p["n_layers"], p["hidden"],
@@ -136,6 +136,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     # Test the new function of latent space
     #NEED TO ADAPT THIS FUNCTION
     qzx = [np.array(x) for x in X_train_fwd['qzx']]
+
     print('len qzx')
     print(len(qzx))
     # Get classificator labels, for n time points
@@ -155,7 +156,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     }
     #Convert to standard
     #Add padding so that the mask also works here
-    DX = [[dx_dict[x] for x in elem] for elem in Y_train["DX"]]
+    DX = [[x for x in elem] for elem in Y_train["DX"]]
 
     #Define colors
     pallete_dict = {

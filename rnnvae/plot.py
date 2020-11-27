@@ -234,14 +234,19 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                 )
                 ax.axis('off')
             elif i > j:
-                xi, xj, si, sj = (np.array([]) for i in range(4))
+                xi, xj, si, sj = (np.array([]) for _ in range(4))
                 if mask is not None and classificator is not None: classificator_masked = np.array([])
     
                 # select only the timepoints needed
                 # We assume that all subjects have the same number of timepoints
                 for tp in range(max_tp):
+                    #If not current tp
                     if plt_tp != "all" and tp not in plt_tp:
                         continue
+                    #  if qzx for i or for j is none, also continue
+                    if not qzx[i][tp] or not qzx[j][tp]:
+                        continue
+                    # import pdb; pdb.set_trace()
                     xii = qzx[i][tp].loc.cpu().detach().numpy()[:, comp]
                     xjj = qzx[j][tp].loc.cpu().detach().numpy()[:, comp]
                     sii = qzx[i][tp].scale.cpu().detach().numpy()[:, comp]
@@ -260,6 +265,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                             # select the color from the timepoints and the subjects specified
                             # there will be no problem with tp > len(color) as we have already selected
                             # subjects with that tp with mask_ij
+                            clf_mask = []
                             clf_mask = [color[tp] for idx, color in enumerate(classificator) if mask_ij[idx]]
                             classificator_masked = np.append(classificator_masked, np.array(clf_mask))
 
@@ -273,6 +279,9 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                 if classificator is not None:
                     #For this to work, length of classificator must be equal to length of the timepoints and subjects
                     for g in groups:
+                        #hack for the ntp case
+                        if g not in pallete_dict.keys():
+                            continue
                         if mask is not None:
                             g_idx = classificator_masked == g
                         else:
@@ -301,7 +310,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                 ax.axis('off')
         if classificator is not None:
             # groups = sorted(groups, key=lambda t: int(t))
-            [axs[-1, 0].plot(0,0, color=pallete_dict[g]) for g in groups]
+            [axs[-1, 0].plot(0,0, color=pallete_dict[g]) for g in groups if g in pallete_dict.keys()]
             # legend = ['{} (n={})'.format(g, len(classificator[classificator==g])) for g in groups]
             legend = ['{}'.format(g) for g in groups]
             axs[-1,0].legend(legend)
@@ -336,6 +345,8 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                     for tp in range(max_tp):
                         if plt_tp != "all" and tp not in plt_tp:
                             continue
+                        if not qzx[ch][tp]:
+                            continue
                         xii = qzx[ch][tp].loc.cpu().detach().numpy()[:, i]
                         xjj = qzx[ch][tp].loc.cpu().detach().numpy()[:, j]
 
@@ -357,6 +368,9 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                         xj = np.append(xj, xjj)
                     if classificator is not None:
                         for g in groups:
+                            #hack for the ntp case
+                            if g not in pallete_dict.keys():
+                                continue
                             if mask is not None:
                                 g_idx = classificator_masked == g
                             else:
@@ -372,7 +386,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                     axs[j, i].axis('off')
             if classificator is not None:
                 # groups = sorted(groups, key=lambda t: int(t))
-                [axs[-1, 0].plot(0,0, color=pallete_dict[g]) for g in groups]
+                [axs[-1, 0].plot(0,0, color=pallete_dict[g]) for g in groups if g in pallete_dict.keys()]
                 legend = ['{}'.format(g) for g in groups]
                 axs[-1,0].legend(legend)
 

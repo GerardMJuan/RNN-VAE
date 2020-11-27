@@ -10,7 +10,7 @@ import torch
 from torch import nn
 import numpy as np
 from sklearn.metrics import mean_absolute_error
-from rnnvae import rnnvae
+from rnnvae import rnnvae_drop
 from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
 from sklearn.metrics import mean_squared_error
@@ -33,7 +33,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     np.random.seed(p["seed"])
 
     #Redirect output to the out dir
-    # sys.stdout = open(out_dir + 'output.out', 'w')
+    sys.stdout = open(out_dir + 'output.out', 'w')
 
     #save parameters to the out dir 
     with open(out_dir + "params.txt","w") as f:
@@ -61,7 +61,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
     print('Length of train/test')
     print(len(X_train[0]))
-    print(len(X_test[0]))
+    # print(len(X_test[0]))
 
     #For each channel, pad, create the mask, and append
     for x_ch in X_train:
@@ -72,6 +72,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         X_train_pad[torch.isnan(X_train_pad)] = 0
         X_train_list.append(X_train_pad.to(DEVICE))
 
+    for x_ch in X_test:
         X_test_tensor = [ torch.FloatTensor(t) for t in x_ch]
         X_test_pad = nn.utils.rnn.pad_sequence(X_test_tensor, batch_first=False, padding_value=np.nan)
         mask_test = ~torch.isnan(X_test_pad)
@@ -79,7 +80,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         X_test_pad[torch.isnan(X_test_pad)] = 0
         X_test_list.append(X_test_pad.to(DEVICE))
 
-    ntp = np.max(X_train_list[0].shape[0], X_test_list[0].shape[0])
+    ntp = max(X_train_list[0].shape[0], X_test_list[0].shape[0])
 
     model = rnnvae.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
                             p["hidden"], p["n_layers"], p["hidden"],
@@ -121,6 +122,23 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     print('MSE over the test set: ' + str(test_loss["mae"]))
     print('Reconstruction loss the train set: ' + str(test_loss["rec_loss"]))
 
+    ## Prediction of last time point
+
+    # Test data without last timepoint
+
+    # Run prediction
+
+    #Compute MCVAE over last timepoint
+
+    ## Test reconstruction over all channels.
+
+    # For each channel
+
+    # try to reconstruct it from the other ones
+
+    # Get result
+
+
     # Dir for projections
     proj_path = 'z_proj/'
     if not os.path.exists(out_dir + proj_path):
@@ -129,30 +147,12 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     # Test the new function of latent space
     #NEED TO ADAPT THIS FUNCTION
     qzx_train = [np.array(x) for x in X_train_fwd['qzx']]
-    qzx_test = [np.array(x) for x in X_train_fwd['qzx']]
-    qzx = qzx_train + qzx_test
+    qzx_test = [np.array(x) for x in X_test_fwd['qzx']]
 
-    print('len qzx')
-    print(len(qzx))
-
-    # Get classificator labels, for n time points
-    out_dir_sample = out_dir + 'zcomp_ch_dx/'
-    if not os.path.exists(out_dir_sample):
-        os.makedirs(out_dir_sample)
-
-    dx_dict = {
-        "NL": "CN",
-        "MCI": "MCI",
-        "MCI to NL": "CN",
-        "Dementia": "AD",
-        "Dementia to MCI": "MCI",
-        "NL to MCI": "MCI",
-        "NL to Dementia": "AD",
-        "MCI to Dementia": "AD"
-    }
     #Convert to standard
     #Add padding so that the mask also works here
-    DX = [[dx_dict[x] for x in elem] for elem in Y_train["DX"]]
+    DX_train = [[x for x in elem] for elem in Y_train["DX"]]
+    DX_test = [[x for x in elem] for elem in Y_test["DX"]]
 
     #Define colors
     pallete_dict = {
@@ -161,28 +161,43 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         "AD": "#af1f1f"
     }
 
-    plot_latent_space(model, qzx, ntp, classificator=DX, pallete_dict=pallete_dict, plt_tp='all',
-                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample, mask=mask_train_list)
+    # Get classificator labels, for n time points
+    out_dir_sample = out_dir + 'zcomp_ch_dx/'
+    if not os.path.exists(out_dir_sample):
+        os.makedirs(out_dir_sample)
 
+    plot_latent_space(model, qzx_test, ntp, classificator=DX_test, pallete_dict=pallete_dict, plt_tp='all',
+                all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample + '_test', mask=mask_test_list)
+
+    plot_latent_space(model, qzx_train, ntp, classificator=DX_train, pallete_dict=pallete_dict, plt_tp='all',
+                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample + '_train', mask=mask_train_list)
+    
     out_dir_sample_t0 = out_dir + 'zcomp_ch_dx_t0/'
     if not os.path.exists(out_dir_sample_t0):
         os.makedirs(out_dir_sample_t0)
 
-    plot_latent_space(model, qzx, ntp, classificator=DX, pallete_dict=pallete_dict, plt_tp=[0],
-                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample_t0, mask=mask_train_list)
+    plot_latent_space(model, qzx_train, ntp, classificator=DX_train, pallete_dict=pallete_dict, plt_tp=[0],
+                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample_t0 + '_train', mask=mask_train_list)
 
+    plot_latent_space(model, qzx_test, ntp, classificator=DX_test, pallete_dict=pallete_dict, plt_tp=[0],
+                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample_t0 + '_test', mask=mask_test_list)
 
     # Now plot color by timepoint
     out_dir_sample = out_dir + 'zcomp_ch_tp/'
     if not os.path.exists(out_dir_sample):
         os.makedirs(out_dir_sample)
 
-    classif = [[i for (i, x) in enumerate(elem)] for elem in Y_train["DX"]]
+    classif_train = [[i for (i, x) in enumerate(elem)] for elem in Y_train["DX"]]
+    classif_test = [[i for (i, x) in enumerate(elem)] for elem in Y_test["DX"]]
+
     pallete = sns.color_palette("viridis", ntp)
     pallete_dict = {i:value for (i, value) in enumerate(pallete)}
 
-    plot_latent_space(model, qzx, ntp, classificator=classif, pallete_dict=pallete_dict, plt_tp='all',
-                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample, mask=mask_train_list)
+    plot_latent_space(model, qzx_train, ntp, classificator=classif_train, pallete_dict=pallete_dict, plt_tp='all',
+                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample + '_train', mask=mask_train_list)
+
+    plot_latent_space(model, qzx_test, ntp, classificator=classif_test, pallete_dict=pallete_dict, plt_tp='all',
+                    all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample + '_test', mask=mask_test_list)
 
     loss = {
         "mse_train" : train_loss["mae"],
