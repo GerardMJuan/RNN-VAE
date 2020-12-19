@@ -136,8 +136,13 @@ experiments/*
 experiments_mc/*
 experiments/
 experiments_mc/
+experiments_mc_newloss/
+experiments_mc_rnn/
 
 #LOGS folder
 LOGS/
 
 env.sh
+
+#results file
+baseline_loss.csv

@@ -264,8 +264,9 @@ class MCRNNVAE(nn.Module):
 
         # Building blocks
         # Build them for every channel!
-        self.ch_priors = nn.ModuleList() # LIST OF PRIORS
-        self.ch_phi_x = nn.ModuleList() #LIST OF TRANSFORMATION TO INPUT
+        #self.ch_prior = nn.ModuleList() # LIST OF PRIORS
+        self.ch_prior = VariationalBlock(self.h_size, self.enc_hidden, self.latent, self.enc_n) # WE ONLY WANT ONE PRIOR
+        self.ch_phi_x = nn.ModuleList() #LIST OF TRANSFORMATION TO LATENT
         self.ch_enc = nn.ModuleList() #LIST OF ENCODERS
         self.ch_phi_z = nn.ModuleList() #LIST OF TRANSFORMATION TO LATENT
         self.ch_dec = nn.ModuleList() #LIST OF DECODERS
@@ -293,7 +294,7 @@ class MCRNNVAE(nn.Module):
                 self.dec_input = self.phi_z_hidden + self.h_size
                 self.enc_input = self.phi_x_hidden + self.h_size
             ## PRIOR 
-            self.ch_priors.append(VariationalBlock(self.h_size, self.enc_hidden, self.latent, self.enc_n))
+            #self.ch_priors.append(VariationalBlock(self.h_size, self.enc_hidden, self.latent, self.enc_n))
 
             ### ENCODER
             self.ch_phi_x.append(PhiBlock(self.n_feats[ch], self.phi_x_hidden, 1)) # hardcode 1 layer
@@ -332,9 +333,7 @@ class MCRNNVAE(nn.Module):
             self.varname.append(['feat.' + str(j) for j in range(self.n_feats[ch])])
 
 
-
     def sample_from(self, qzx):
-
         '''
         sampling by leveraging on the reparametrization trick
         '''
@@ -376,10 +375,13 @@ class MCRNNVAE(nn.Module):
         phi_zx_list = []
         phi_x_list = []
 
+        ht_prior = torch.stack(ht_list).mean(0)
+        z_prior = self.ch_prior(ht_prior[-1]) # get the prior from the hidden state
+
         #For each available channel
         for i in range(self.n_channels):
             ht = ht_list[i]
-            z_prior = self.ch_priors[i](ht[-1]) # get the prior from the hidden state
+            #z_prior = self.ch_priors[i](ht[-1]) # get the prior from the hidden state
             if i in av_ch:
                 #If we have available channel, do normal pipeline 
                 xt = xt_list[av_ch.index(i)]
@@ -422,7 +424,6 @@ class MCRNNVAE(nn.Module):
                 pxz_t = self.ch_dec[j](x)  # Decode from each different channel
                 pxz_t_list[i].append(pxz_t)
 
-            z_prior_list.append(z_prior)
             zx_t_list.append(z_t)
 
 
@@ -450,7 +451,7 @@ class MCRNNVAE(nn.Module):
 
 
         # Return xt_list, in the not sampling case, this does nothing, in the other case, returns the reconstructed x
-        return hnext_list, z_prior_list, zx_t_list, qzx_t_list, pxz_t_list
+        return hnext_list, z_prior, zx_t_list, qzx_t_list, pxz_t_list
 
 
     def predict(self, data, nt, av_ch=None):
@@ -474,9 +475,9 @@ class MCRNNVAE(nn.Module):
                 # initialize returns
                 z = [[] for _ in range(self.n_channels)]
                 pxz = [[] for _ in range(self.n_channels)]
-                zp = [[] for _ in range(self.n_channels)]
+                # zp = [[] for _ in range(self.n_channels)]
                 qzx = [[] for _ in range(self.n_channels)]
-
+                zp = []
                 #For each timepoint
                 for tp in range(nt):
                     #Need to repopulate the list so that it contains a single time point, still being a list
@@ -486,11 +487,12 @@ class MCRNNVAE(nn.Module):
                     # If we have x information, we do a normal step
                     hnext, zp_t, z_t, qzx_t, pxz_t = self.step_predict(x_t, ht, curr_channels)
 
+                    zp.append(zp_t)
                     for i in range(self.n_channels):
                         #this xnext needs to be averaged across all the values, as it is reocnstructed from all channels
                         z[i].append(z_t[i])
                         pxz[i].append(pxz_t[i])
-                        zp[i].append(zp_t[i])
+                        # zp[i].append(zp_t[i])
                         qzx[i].append(qzx_t[i])
                     ht = hnext
 
@@ -522,8 +524,6 @@ class MCRNNVAE(nn.Module):
         
         raise RuntimeError('Model needs to be fit')
 
-
-
         # The channels that are not available
 
     def step(self, xt_list, ht_list, curr_channels, av_ch=None):
@@ -543,12 +543,17 @@ class MCRNNVAE(nn.Module):
 
         phi_zx_list = []
 
+        #get the shared prior
+        ht_prior = torch.stack(ht_list).mean(0)
+        z_prior = self.ch_prior(ht_prior[-1]) # get the prior from the hidden state
+
         # First part: get all the decoders
         #Assume that the n_channels in the input can be variable
         for i in range(len(curr_channels)):
             ch = curr_channels[i]
+            ##COMPUTE THE MEAN TO SHARE THE PRIORS
             ht = ht_list[i]
-            z_prior = self.ch_priors[ch](ht[-1]) # get the prior from the hidden state
+            #z_prior = self.ch_priors[ch](ht[-1]) # get the prior from the hidden state
             
             #If we are not sampling from the prior, we have an input value
             xt = xt_list[i]
@@ -586,7 +591,6 @@ class MCRNNVAE(nn.Module):
                 pxz_t = self.ch_dec[j](x)  # Decode from each different channel
                 pxz_t_list[i].append(pxz_t)
 
-            z_prior_list.append(z_prior)
             zx_t_list.append(z_t)
 
             if self.ch_type[ch] == 'long':
@@ -599,7 +603,7 @@ class MCRNNVAE(nn.Module):
             hnext_list.append(hnext)
 
         # Return xt_list, in the not sampling case, this does nothing, in the other case, returns the reconstructed x
-        return hnext_list, z_prior_list, zx_t_list, qzx_t_list, pxz_t_list
+        return hnext_list, z_prior, zx_t_list, qzx_t_list, pxz_t_list
 
     def forward(self, x):
         """
@@ -620,7 +624,7 @@ class MCRNNVAE(nn.Module):
         qzx = [[] for _ in range(self.n_channels)]
         zx = [[] for _ in range(self.n_channels)]
         pxz = [[] for _ in range(self.n_channels)]
-        zp = [[] for _ in range(self.n_channels)]
+        zp = []
         # ITERATE OVER THE SEQUENCE, at each time point
         #MISTAKE: HERE WE ALWAYS ITERATE, AT MAX, FROM THE NTP FROM CHANNEL 0. SHOULD BE FROM THE MAX
         # OR AT LEAST FORCE ALL TPS TO HAVE THE SAME SIZE
@@ -634,13 +638,15 @@ class MCRNNVAE(nn.Module):
             h_t = [hti for i, hti in enumerate(ht) if i in curr_channels]
             tp += 1
             #Only run those channels
+            if not curr_channels: continue
             hnext, zp_t, zx_t, qzx_t, pxz_t = self.step(x_t, h_t, curr_channels)
             #Recover the initial shape. Append each channel where it corresponds
+            zp.append(zp_t)
             for i in range(len(x_t)):
                 ch = curr_channels[i]
                 zx[ch].append(zx_t[i])
                 pxz[ch].append(pxz_t[i])
-                zp[ch].append(zp_t[i])
+                # zp[ch].append(zp_t[i])
                 qzx[ch].append(qzx_t[i])
                 ht[ch] = hnext[i]
 
@@ -775,7 +781,6 @@ class MCRNNVAE(nn.Module):
         zp = fwd_return['zp']
         kl = 0
         ll = 0
-
         # Need to compute the number of timepoints of each subject at each channel
         # in order to normalize later by number of timepoints
         #this probably would work better in a function to compute it only once
@@ -803,7 +808,7 @@ class MCRNNVAE(nn.Module):
                 if t == 0 and self.dropout:
                     kl_base = KL_log_uniform(qzx[ch][t]).sum(1)
                 else:
-                    kl_base = self.KL_fn(qzx[ch][t], zp[ch][t]).sum(1)
+                    kl_base = self.KL_fn(qzx[ch][t], zp[t]).sum(1)
                 # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
                 if not torch.sum(mask_i[i]) == 0:
                     kl_base = kl_base * ntp_subj_list[ch]
@@ -875,6 +880,7 @@ class MCRNNVAE(nn.Module):
                 # KL divergence
                 #the second distribution is not the normal, is the prior!!
                 # TEST it directly
+                import pdb; pdb.set_trace()
                 if t == 0 and self.dropout:
                     kl_base = KL_log_uniform(qzx[ch][t]).sum(1)
                 else:

@@ -222,6 +222,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
         itercomps = range(comps)
     # For each component
     for comp in itercomps:
+        if channels == 1: continue
         fig, axs = plt.subplots(channels, channels, figsize=(25,25))
         fig.suptitle(r'$z_{' + str(comp) + '}$', fontsize=30)
         for i, j in itertools.product(range(channels), range(channels)):
@@ -286,7 +287,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                             g_idx = classificator_masked == g
                         else:
                             g_idx = classificator == g
-                        ax.plot(xi[g_idx], xj[g_idx], '.', color=pallete_dict[g], alpha=0.75, markersize=12, markeredgecolor='k', markeredgewidth=0.5)
+                        ax.plot(xi[g_idx], xj[g_idx], '.', color=pallete_dict[g], alpha=0.95, markersize=12, markeredgecolor='k', markeredgewidth=0.5)
                         if uncertainty:
                             color = ax.get_lines()[-1].get_color()
                             for idx in np.where(g_idx)[0]:
@@ -375,7 +376,7 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                                 g_idx = classificator_masked == g
                             else:
                                 g_idx = classificator == g
-                            axs[j, i].plot(xi[g_idx], xj[g_idx], '.', color=pallete_dict[g], alpha=0.75, markersize=15, markeredgecolor='k', markeredgewidth=0.5)
+                            axs[j, i].plot(xi[g_idx], xj[g_idx], '.', color=pallete_dict[g], alpha=0.95, markersize=15, markeredgecolor='k', markeredgewidth=0.5)
                     else:
                         axs[j, i].plot(xi, xj, '.')
                         

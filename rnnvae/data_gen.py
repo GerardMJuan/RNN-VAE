@@ -8,6 +8,194 @@ https://stackoverflow.com/questions/22566692/python-how-to-plot-graph-sine-wave
 import numpy as np
 import random 
 
+
+def sinus(x, p):
+    """
+    Compute sinusoid function.
+    pars is a dict containing the parameters
+    """
+    y = p["A"]*np.sin(2*np.pi*p["f"]*x)
+    return y
+
+def cosinus(x, p):
+    """
+    Compute cosinus function.
+    pars is a dict containing the parameters
+    """
+    y = p["A"]*np.cos(2*np.pi*p["f"]*x)
+    return y
+
+
+def sigmoid(x, p):
+    """
+    Compute sigmoid function, using logistic formula
+    pars is a dict containing the parameters
+    """
+    y = p["L"]/(1 + np.exp(-p["k"]*(x-p["x0"])))
+    return y 
+
+
+class LatentDataGeneratorCurves():
+    """
+    Generate different channels of data
+    using a number of latent variables
+    and output longitudinal channels.
+
+    #THere are two possible paradigms for data generator. Testing the first one:
+    where the curve are applied to the z 
+    """
+
+    def __init__(self, curves, ch_type, ntp, noise, lat_dim=1, n_channels=1, n_feats=10, variable_tp=False):
+        """
+        Init the parameters and define the distribution
+        curves: the type of curves of the channels. 
+        Curves is a list of tuples. Each tuple has the following aspect:
+        ("type_of_curve", **par)
+        "type_of_curve" can be "cos", "sin", or "sigmoid"
+        ch_type: either "long" or "bl", if "bl", just use base z
+        ntp: maximum number of time points for the longitudinal channels
+        noise: amount of noise
+        lat_dim: number of true latent dimensions
+        n_channels: number of channels
+        n_feats: number of feats, list of each channel
+        """
+        self.curves=curves
+        self.ch_type = ch_type
+        self.ntp = ntp
+        self.noise = noise #scalar controlling the amount of gaussian noise
+        self.lat_dim = lat_dim
+        self.n_channels=n_channels
+        self.n_feats = n_feats        
+        self.variable_tp = variable_tp
+
+        self.curve_dict ={
+            "cos": cosinus,
+            "sin": sinus,
+            "sigmoid": sigmoid
+        }
+        # Weights to transform the latent values
+        self.W = []
+
+        for _ in range(self.n_channels):
+            w_ = np.random.uniform(-1, 1, (self.n_feats, self.lat_dim))
+            u, _, vt = np.linalg.svd(w_, full_matrices=False)
+            w = u if self.n_feats >= self.lat_dim else vt
+            self.W.append(w)
+
+    def generate_samples(self, nsamples):
+        """
+        Generate the number of samples
+        z is ds
+        """
+        z = np.random.randn(self.lat_dim,nsamples)
+
+        #get the time points
+        X = np.sort(np.random.uniform(0, 10, (self.ntp)))   
+
+        # Create the curves
+        if self.variable_tp:
+            #remove n random items from the 
+            length = random.choice(range(self.ntp-5, self.ntp))
+            X = np.sort(np.random.uniform(0, 10, length))    
+
+        
+        #creat long curves
+        Y = []
+        for ch in range(self.n_channels):
+            curve = self.curves[ch]
+            #for the number of features indicated in that curve
+            y = self.curve_dict[curve[0]](X, curve[1])
+            y = np.asarray([y_i + self.noise*np.random.normal(size=y_i.shape) for y_i in y])
+            if self.ch_type[ch] == 'bl':
+                # Select only first timepoint
+                y = [y[0]]
+
+            Y.append(y)
+
+        self.Y_out = []
+        for ch in range(self.n_channels):
+            #Multiply to normal space
+            Y_ch = self.W[ch]@z
+            # sum to curves
+            Y_ch = np.array([Y_ch+cur for cur in Y[ch]])
+
+            self.Y_out.append(Y_ch)
+
+        return z, self.Y_out
+
+class LatentDataGenerator():
+    """
+    Generate different channels of data
+    using a number of latent variables
+    and output longitudinal channels.
+
+    #THere are two possible paradigms for data generator. Testing the first one:
+    where the curve are applied to the z 
+    """
+
+    def __init__(self, ch_type, ntp, noise, lat_dim=1, n_channels=1, n_feats=10):
+        """
+        Init the parameters and define the distribution
+        curves: the type of curves of the channels. 
+        Curves is a list of tuples. Each tuple has the following aspect:
+        ("type_of_curve", **par)
+        "type_of_curve" can be "cos", "sin", or "sigmoid"
+        ch_type: either "long" or "bl", if "bl", just use base z
+        ntp: maximum number of time points for the longitudinal channels
+        noise: amount of noise
+        lat_dim: number of true latent dimensions
+        n_channels: number of channels
+        n_feats: number of feats, list of each channel
+        """
+        self.ch_type = ch_type
+        self.ntp = ntp
+        self.noise = noise #scalar controlling the amount of gaussian noise
+        self.lat_dim = lat_dim
+        self.n_channels=n_channels
+        self.n_feats = n_feats        
+
+        # Weights to transform the latent values
+        self.W = []
+
+        for _ in range(self.n_channels):
+            w_ = np.random.uniform(-1, 1, (self.n_feats, self.lat_dim))
+            u, _, vt = np.linalg.svd(w_, full_matrices=False)
+            w = u if self.n_feats >= self.lat_dim else vt
+            self.W.append(w)
+
+    def generate_samples(self, nsamples):
+        """
+        Generate the number of samples
+        z is ds
+        """
+        z = np.random.randn(nsamples, self.lat_dim)
+
+        #get the time points
+        X = np.sort(np.random.uniform(0, 1, (self.lat_dim, self.ntp)))   
+
+        #Create the latent timeshits
+        self.Z_t = []
+
+        for i in range(self.ntp):
+            y = z*X[:,i]
+
+            # y = self.curve_dict[curve[0]](X, curve[1])
+            # y = np.asarray([z for z in y])
+            self.Z_t.append(y)
+
+        self.Y = []
+        # Create the outputs
+        for ch in range(self.n_channels):
+            #Multiply to each z_t
+            Y_ch = np.array([self.W[ch]@Z.T for Z in self.Z_t])
+            Y_ch = Y_ch + self.noise*np.random.normal(size=Y_ch.shape)
+            if self.ch_type[ch] == 'bl':
+                # Select only first timepoint
+                Y_ch = Y_ch[0,:]
+            self.Y.append(Y_ch)
+        return self.Z_t, self.Y
+
+
 class SinDataGenerator():
 
     def __init__(self, curves, ntp, noise, variable_tp=False):

@@ -1,7 +1,6 @@
 """
-Testing the full ADNI pipeline with the Multi Channel version
-
-Load different channels and test it
+Script with all the new parameters added, used for testing those
+parameters.
 """
 import sys
 import os
@@ -10,7 +9,7 @@ import torch
 from torch import nn
 import numpy as np
 from sklearn.metrics import mean_absolute_error
-from rnnvae import rnnvae_drop
+from rnnvae import rnnvae
 from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
 from sklearn.metrics import mean_squared_error, mean_absolute_error
@@ -49,7 +48,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     # LOAD DATA
     #Start by not using validation data
     # this is a list of values
-    X_train, X_test, Y_train, Y_test, mri_col = load_multimodal_data(csv_path, data_cols, train_set=0.8, normalize=True, return_covariates=True)
+    X_train, X_test, Y_train, Y_test, mri_col = load_multimodal_data(csv_path, data_cols, p["ch_type"], train_set=0.9, normalize=True, return_covariates=True)
 
     p["n_feats"] = [x[0].shape[1] for x in X_train]
 
@@ -83,11 +82,13 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     # ntp = max(X_train_list[0].shape[0], X_test_list[0].shape[0])
     ntp = max(max([x.shape[0] for x in X_train_list]), max([x.shape[0] for x in X_train_list]))
 
-    model = rnnvae_drop.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
+    model = rnnvae.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
                             p["hidden"], p["n_layers"], p["hidden"],
                             p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
                             p["clip"], p["n_epochs"], p["batch_size"], 
-                            p["n_channels"], p["n_feats"], DEVICE, 0.3, print_every=100)
+                            p["n_channels"], p["ch_type"], p["n_feats"], DEVICE, print_every=100, 
+                            phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
+                            dropout=p["dropout"], dropout_threshold=p["drop_th"])
 
     model.ch_name = p["ch_names"]
 
@@ -98,8 +99,14 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     # Fit the model
     model.fit(X_train_list, X_test_list, mask_train_list, mask_test_list)
 
-    print("Print the dropout")
-    print(model.dropout)
+    #fit the model after changing the lr
+    #optimizer = torch.optim.Adam(model.parameters(), lr=p["learning_rate"]*.1)
+    #model.optimizer = optimizer
+    #print('Refining optimization...')
+    #model.fit(X_train_list, X_test_list, mask_train_list, mask_test_list)
+    if p["dropout"]:
+        print("Print the dropout")
+        print(model.dropout_comp)
 
     ### After training, save the model!
     model.save(out_dir, 'model.pt')
@@ -168,23 +175,24 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     ############################
     # For each channel
     rec_results = {}
-    for i in range(len(X_test_list)):
-        curr_name = p["ch_names"][i]
-        av_ch = list(range(len(X_test_list)))
-        av_ch.remove(i)
-        # try to reconstruct it from the other ones
-        ch_recon = model.predict(X_test_list, nt=ntp, av_ch=av_ch)
-        ch_recon["xnext"]
-        #for all existing timepoints
-        mae_loss = 0
-        for t in range(len(mask_test_list[i])):
-            mask_channel = mask_test_list[i][t,:,0]
-            mae_loss += rnnvae_drop.mae(target=X_test_list[i][t].cpu(), predicted=ch_recon["xnext"][i][t], mask=mask_channel)
+    if p["n_channels"] > 1:
 
-        # Get MAE result for that specific channel over all timepoints
-        #for this, i also need the mask
+        for i in range(len(X_test_list)):
+            curr_name = p["ch_names"][i]
+            av_ch = list(range(len(X_test_list)))
+            av_ch.remove(i)
+            # try to reconstruct it from the other ones
+            ch_recon = model.predict(X_test_list, nt=ntp, av_ch=av_ch)
+            #for all existing timepoints
+            mae_loss = 0
+            for t in range(len(mask_test_list[i])):
+                mask_channel = mask_test_list[i][t,:,0]
+                mae_loss += rnnvae.mae(target=X_test_list[i][t].cpu(), predicted=ch_recon["xnext"][i][t], mask=mask_channel)
 
-        rec_results[f"recon_{curr_name}_mae"] = mae_loss.item()
+            # Get MAE result for that specific channel over all timepoints
+            #for this, i also need the mask
+
+            rec_results[f"recon_{curr_name}_mae"] = mae_loss.item()
 
     # Dir for projections
     proj_path = 'z_proj/'
@@ -207,7 +215,6 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         "MCI": "#bfbc1a",
         "AD": "#af1f1f"
     }
-
     # Get classificator labels, for n time points
     out_dir_sample = out_dir + 'zcomp_ch_dx/'
     if not os.path.exists(out_dir_sample):
@@ -245,7 +252,6 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
     plot_latent_space(model, qzx_test, ntp, classificator=classif_test, pallete_dict=pallete_dict, plt_tp='all',
                     all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample + '_test', mask=mask_test_list)
-
     loss = {
         "mae_train" : train_loss["mae"],
         "rec_train" : train_loss["rec_loss"],
@@ -253,8 +259,11 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         "mae_last_tp" : last_tp_mse,
         "loss_total": model.loss['total'][-1],
         "loss_kl": model.loss['kl'][-1],
-        "loss_ll": model.loss['ll'][-1]
+        "loss_ll": model.loss['ll'][-1],
     }
+
+    if p["dropout"]:
+        loss["dropout_comps"] = model.dropout_comp
 
     loss = {**loss, **rec_results}
 
@@ -262,28 +271,36 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
 if __name__ == "__main__":
 
-    ### Parameter definition
+    # Testing only baseline in all channels!!
 
-    #channels = ['_mri_vol','_mri_cort','_demog','_apoe', '_cog', '_fluid','_fdg','_av45']
-    #names = ["MRI vol", "MRI cort", "Demog", "APOE", "Cog", "Fluid", "FDG", "AV45"]
+    channels = ['_mri_vol']
+    names = ["MRI vol"]
+    ch_type = ["long"]
 
-    channels = ['_mri_vol','_mri_cort', '_cog']
-    names = ["MRI vol", "MRI cort", "Cog"]
+
+    #channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
+    #names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
+    #ch_type = ["bl", "bl", "bl", "bl", 'bl']
 
     params = {
-        "h_size": 10,
-        "z_dim": 10,
-        "hidden": 20,
-        "n_layers": 0,
-        "n_epochs": 1000,
+        "h_size": 50,
+        "z_dim": 5,
+        "hidden": 50,
+        "n_layers": 1,
+        "n_epochs": 1500,
         "clip": 10,
         "learning_rate": 1e-3,
         "batch_size": 128,
         "seed": 1714,
         "n_channels": len(channels),
-        "ch_names" : names
+        "ch_names" : names,
+        "ch_type": ch_type,
+        "phi_layers": True,
+        "sig_mean": False,
+        "dropout": False,
+        "drop_th": 0.4
     }
 
-    out_dir = "experiments_mc/MRI_ADNI_first/"
-    csv_path = "data/multimodal_no_petfluid.csv"
+    out_dir = "experiments_mc_newloss/h_doublefix/"
+    csv_path = "data/multimodal_no_petfluid_train.csv"
     loss = run_experiment(params, csv_path, out_dir, channels)

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from random import randint
 from sklearn.manifold import TSNE
 from sklearn.decomposition import TruncatedSVD
+from sklearn.model_selection import GroupShuffleSplit, ShuffleSplit, StratifiedShuffleSplit
 
 def pandas_to_data_timeseries_var(df, feat, normalize=True, id_col = 'PTID'):
     """
@@ -38,14 +39,116 @@ def pandas_to_data_timeseries_var(df, feat, normalize=True, id_col = 'PTID'):
     # Return numpy dataframe
     return X
 
-def load_multimodal_data(csv_path, suffixes_list, train_set = 0.8, normalize=True, return_covariates=False):
+def load_multimodal_data_cv(csv_path, suffixes_list, type_modal, nsplit=10, normalize=True):
     """
     This function returns several types of data from a csv dataset in different channels.
     Returns the data in the appropiate format, a list of different channels.
 
     if train_set=1.0, there is no divide between train and test
     channels is a list containing the suffixes of the columns of the original csv for that specific channel
+    type_modal is a list with either "bl" or "long", depending on the type of data
+    The data needs to already be preprocessed.
 
+    """
+    data_df = pd.read_csv(csv_path)
+
+    dx_dict = {
+        "NL": "CN",
+        "MCI": "MCI",
+        "MCI to NL": "CN",
+        "Dementia": "AD",
+        "Dementia to MCI": "MCI",
+        "NL to MCI": "MCI",
+        "NL to Dementia": "AD",
+        "MCI to Dementia": "AD"
+    }
+
+    data_df['DX'] = data_df['DX'].map(dx_dict)
+    data_df = data_df.sort_values(by=['PTID', 'Years_bl'], ascending=[True, True])
+
+    gss = ShuffleSplit(n_splits=nsplit)
+    for train_dataset, test_dataset in gss.split(X=data_df[data_df.VISCODE=='bl'].PTID.values, y=data_df[data_df.VISCODE=='bl'].DX.values):
+        X_train_full = []
+        X_test_full = []
+        col_lists = []
+
+        train_ptid = data_df[data_df.VISCODE=='bl'].PTID.values[train_dataset]
+        test_ptid = data_df[data_df.VISCODE=='bl'].PTID.values[test_dataset]
+
+        for (suffix, ch_type) in zip(suffixes_list, type_modal):
+
+            cols = data_df.columns.str.contains(suffix)
+            cols = data_df.columns[cols].values
+            col_lists.append(cols)
+
+            #Aquests linies NO haurien de fer falta perquè ja hem assegurat que tots els Bl TINGUIN tal.
+            if ch_type == 'bl':
+                data_df_base = data_df[data_df.VISCODE == 'bl']
+            else:
+                data_df_base = data_df.copy()
+            data_df_base = data_df_base.dropna(axis=0, subset=cols)
+            data_df_base = data_df_base.reset_index(drop=True)
+
+
+            #Drop columns where ptid do not have any bl
+            # data_df_bl = data_df[data_df.VISCODE == 'bl']       #select baselines
+            # ptid_with_bl = data_df_bl.PTID.unique()                #select which ptid have bl
+            # data_df = data_df[data_df.PTID.isin(ptid_with_bl)]  #remove the others
+
+            # Select only the subjects with nfollowups
+            # ptid_list = np.unique(data_df_base["PTID"])
+
+            # Divide between test and train
+            df_train = data_df_base[data_df_base.PTID.isin(train_ptid)]
+            df_test = data_df_base[data_df_base.PTID.isin(test_ptid)]
+
+            df_train = df_train.reset_index(drop=True)
+            df_test = df_test.reset_index(drop=True)
+
+            # df_train = data_df.iloc[train_dataset]
+            #df_test =  data_df.iloc[test_dataset]
+
+            # Return the features in the correct shape (Nsamples, timesteps, nfeatures)
+            # Order the dataframes
+            X_train = pandas_to_data_timeseries_var(df_train, cols, normalize)
+            X_train_full.append(X_train)
+
+            X_test = pandas_to_data_timeseries_var(df_test, cols, normalize)
+            X_test_full.append(X_test)
+        # Uncomment for debugging
+        #df_train.to_csv('train.csv')
+        #df_test.to_csv('test.csv')
+
+        ## Covariates can be calculated using the last value of  df_train
+        # Columns which contains covariates
+        Y_train = {}
+        Y_test = {}
+
+        cov_cols = ["AGE_demog", "VISCODE","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
+
+        # Divide between test and train
+        df_train = data_df[data_df.PTID.isin(train_ptid)]
+        df_test = data_df[data_df.PTID.isin(test_ptid)]
+
+        df_train = df_train.reset_index(drop=True)
+        df_test = df_test.reset_index(drop=True)
+
+        for col in cov_cols:
+            Y_train[col] = pandas_to_data_timeseries_var(df_train, col, False)
+            Y_test[col] = pandas_to_data_timeseries_var(df_test, col, False)
+
+        yield X_train_full, X_test_full, Y_train, Y_test, col_lists
+
+
+
+def load_multimodal_data(csv_path, suffixes_list, type_modal, train_set=0.8, normalize=True, return_covariates=False):
+    """
+    This function returns several types of data from a csv dataset in different channels.
+    Returns the data in the appropiate format, a list of different channels.
+
+    if train_set=1.0, there is no divide between train and test
+    channels is a list containing the suffixes of the columns of the original csv for that specific channel
+    type_modal is a list with either "bl" or "long", depending on the type of data
     The data needs to already be preprocessed.
 
     """
@@ -78,14 +181,20 @@ def load_multimodal_data(csv_path, suffixes_list, train_set = 0.8, normalize=Tru
         train_ptid = data_df[data_df.VISCODE=='bl'].PTID.values[train_dataset]
         test_ptid = data_df[data_df.VISCODE=='bl'].PTID.values[test_dataset]
 
-    for suffix in suffixes_list:
+    for (suffix, ch_type) in zip(suffixes_list, type_modal):
 
         cols = data_df.columns.str.contains(suffix)
         cols = data_df.columns[cols].values
         col_lists.append(cols)
+
         #Aquests linies NO haurien de fer falta perquè ja hem assegurat que tots els Bl TINGUIN tal.
-        data_df_base = data_df.dropna(axis=0, subset=cols)
+        if ch_type == 'bl':
+            data_df_base = data_df[data_df.VISCODE == 'bl']
+        else:
+            data_df_base = data_df.copy()
+        data_df_base = data_df_base.dropna(axis=0, subset=cols)
         data_df_base = data_df_base.reset_index(drop=True)
+
 
         #Drop columns where ptid do not have any bl
         # data_df_bl = data_df[data_df.VISCODE == 'bl']       #select baselines
@@ -126,7 +235,7 @@ def load_multimodal_data(csv_path, suffixes_list, train_set = 0.8, normalize=Tru
         Y_train = {}
         Y_test = {}
 
-        cov_cols = ["AGE_real_demog", "VISCODE","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
+        cov_cols = ["AGE_demog", "VISCODE","PTGENDER_demog","PTEDUCAT_demog", "DX", "DX_bl", "Years_bl"]
 
         if test:
             # Divide between test and train

@@ -1,42 +1,45 @@
 """
-Auxiliar file to run a lot of experiments on a single file
-
+Metaexperiment for adni using baseline data
 """
 import os
 import sys
 sys.path.insert(0, os.path.abspath('./'))
-from test_adni_pad import run_experiment
+from test_adni_val_full import run_experiment
 from sklearn.model_selection import ParameterGrid
 import configparser
 import time
 from datetime import timedelta
 import pandas as pd
 
-channels = ['_mri_vol','_mri_cort','_demog','_apoe', '_cog', '_fluid','_fdg','_av45']
-names = ["MRI vol", "MRI cort", "Demog", "APOE", "Cog", "Fluid", "FDG", "AV45"]
+channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
+names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
+ch_type = ["long", "long", "long", "bl", 'bl']
 
 params = {
-    "h_size": [40,60,80,100],
-    "z_dim": [5,6,7,8,9],
-    "hidden": [40,60,80,100],
-    "n_layers": [1,2],
-    "n_epochs": [800],
+    "h_size": [5,10,20],
+    "z_dim": [5,7,10,15],
+    "hidden": [10,20],
+    "n_layers": [0,1],
+    "n_epochs": [2000],
     "clip": [10],
     "learning_rate": [1e-3],
     "batch_size": [128],
     "seed": [1714],
     "n_channels": [len(channels)],
-    "ch_names" : [names]
+    "ch_names" : [names],
+    "ch_type": [ch_type],
+    "phi_layers": [False],
+    "sig_mean": [False],
+    "dropout": [True],
+    "drop_th": [0.3]
 }
 
-out_dir = "experiments_mc/MRI_ADNI_first/"
-csv_path = "data/full_multimodal.csv"
-
+csv_path = "data/multimodal_no_petfluid.csv"
 
 #Create two lists, that will store the dictionaries of the loss that later will become a dataframe
 list_loss = []
 
-base_out_dir = "experiments_mc_rnn/meta_ADNI_padding_2/"
+base_out_dir = "experiments_mc_newloss/test_5ch_bl/"
 
 if not os.path.exists(base_out_dir):
     os.makedirs(base_out_dir)
@@ -50,8 +53,9 @@ for p in ParameterGrid(params):
     z_dim = p['z_dim']
     hidden = p['hidden']
     nlayers = p["n_layers"]
+    learning_rate = p["learning_rate"]
     #out_dir = f"{base_out_dir}_h_{h_size}_z_{z_dim}_hid_{hidden}_ntp_{ntp}_n_{nsamples}/"
-    out_dir = f"{base_out_dir}_h_{h_size}_z_{z_dim}_hid_{hidden}_nlayers_{nlayers}/"
+    out_dir = f"{base_out_dir}_h_{h_size}_z_{z_dim}_hid_{hidden}_nl_{nlayers}_lr_{learning_rate}/"
     print("Running: " + out_dir)
     t = time.time()
     loss = run_experiment(p, csv_path, out_dir, channels)

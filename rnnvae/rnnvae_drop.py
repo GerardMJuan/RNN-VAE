@@ -40,6 +40,20 @@ def reconstruction_error(predicted, target, mask):
     rec_masked = torch.masked_select(rec_aux, mask)
     return rec_masked.mean(0)
 
+def KL_log_uniform(p, *args, **kwargs):
+    """
+    Arguments other than 'p' are ignored.
+
+    Formula from Paragraph 4.2 in:
+    Variational Dropout Sparsifies Deep Neural Networks
+    Molchanov, Dmitry; Ashukha, Arsenii; Vetrov, Dmitry
+    https://arxiv.org/abs/1701.05369
+    """
+    log_alpha = compute_log_alpha(p.loc, p.scale.pow(2).log())
+    k1, k2, k3 = 0.63576, 1.8732, 1.48695
+    neg_KL = k1 * torch.sigmoid(k2 + k3 * log_alpha) - 0.5 * torch.log1p(torch.exp(-log_alpha)) - k1
+    return -neg_KL
+
 
 def mae(predicted, target, mask):
     """
@@ -115,13 +129,14 @@ class VariationalBlock(nn.Module):
     receiving an input and the forward pass generating a Normal distribution.
     """
 
-    def __init__(self, input_size, hidden_size, latent_size, n_layers, sigmoid_mean=False):
+    def __init__(self, input_size, hidden_size, latent_size, n_layers, sigmoid_mean=False, log_alpha=None):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.latent_size = latent_size
         self.n_layers = n_layers
         self.sigmoid_mean = sigmoid_mean
+        self.log_alpha = log_alpha
         #Define module list
         self.init_block()
 
@@ -142,9 +157,10 @@ class VariationalBlock(nn.Module):
         else:
             self.to_mu = nn.Linear(self.input_size, self.latent_size)
         
-        self.to_logvar = nn.Sequential(
-            nn.Linear(self.input_size, self.latent_size))   
-            # nn.Softplus())
+        if self.log_alpha is None:
+            self.to_logvar = nn.Sequential(
+                nn.Linear(self.input_size, self.latent_size))   
+        # nn.Softplus())
         #Last layers, to obtain from the same tal both outputs  
 
 
@@ -152,11 +168,19 @@ class VariationalBlock(nn.Module):
         for i in range(len(self.var_layers)):
             x = self.var_layers[i](x)
         mu = self.to_mu(x)
-        logvar = self.to_logvar(x)
-        x = Normal(
-            loc = mu,
-            scale = logvar.exp().pow(0.5)
-        )
+        if self.log_alpha is None:
+            logvar = self.to_logvar(x)
+            x = Normal(
+                loc = mu,
+                scale = logvar.exp().pow(0.5)
+            )
+        else:
+            logvar = compute_logvar(mu, self.log_alpha)
+            x = Normal(
+                loc=mu,
+                scale=logvar.exp().pow(0.5)
+            )
+
         return x
 
 
@@ -193,7 +217,8 @@ class MCRNNVAE(nn.Module):
 
     def __init__(self, h_size, phi_x_hidden, phi_x_n, 
                  phi_z_hidden, phi_z_n, enc_hidden, enc_n, latent, dec_hidden, 
-                 dec_n, clip, nepochs, batch_size, n_channels, n_feats, device, model_name_dict=None,
+                 dec_n, clip, nepochs, batch_size, n_channels, n_feats, device, dropout_threshold,
+                 model_name_dict=None,
                  print_every=100):
 
         super().__init__()
@@ -207,14 +232,15 @@ class MCRNNVAE(nn.Module):
         #Parameters
         self.h_size = h_size
         self.phi_x_hidden = phi_x_hidden
-        self.phi_x_n = phi_x_n
+        self.phi_x_n = phi_x_n #n layers
         self.phi_z_hidden = phi_z_hidden
-        self.phi_z_n = phi_z_n
+        self.phi_z_n = phi_z_n #n layers
         self.enc_hidden = enc_hidden
-        self.enc_n = enc_n
+        self.enc_n = enc_n #n layers
         self.latent = latent
         self.dec_hidden = enc_hidden
         self.dec_n = enc_n
+        self.dropout_threshold = dropout_threshold
 
         # other parameters
         self.clip = clip
@@ -236,16 +262,25 @@ class MCRNNVAE(nn.Module):
         self.ch_dec = nn.ModuleList() #LIST OF DECODERS
         self.ch_RNN = nn.ModuleList() #LIST OF RNN BLOCK
 
+        self.log_alpha = torch.nn.Parameter(torch.FloatTensor(1, self.latent).normal_(0, 0.01))
+
+
         for ch in range(self.n_channels): 
+
+            ###COMMENT OUT WHEN USING THE PHI LAYERS
+            #self.phi_x_hidden = self.n_feats[ch] 
+            #self.phi_z_hidden = self.latent
+            #########################################
+
             ## PRIOR 
             self.ch_priors.append(VariationalBlock(self.h_size, self.enc_hidden, self.latent, self.enc_n))
 
             ### ENCODER
-            self.ch_phi_x.append(PhiBlock(self.n_feats[ch], self.phi_x_hidden, self.phi_x_n))
-            self.ch_enc.append(VariationalBlock(self.phi_x_hidden + self.h_size, self.enc_hidden, self.latent, self.enc_n))
+            self.ch_phi_x.append(PhiBlock(self.n_feats[ch], self.phi_x_hidden, 1)) # hardcode 1 layer
+            self.ch_enc.append(VariationalBlock(self.phi_x_hidden + self.h_size, self.enc_hidden, self.latent, self.enc_n, sigmoid_mean=False, log_alpha=self.log_alpha))
 
             ### DECODER
-            self.ch_phi_z.append(PhiBlock(self.latent, self.phi_z_hidden, self.phi_z_n))
+            self.ch_phi_z.append(PhiBlock(self.latent, self.phi_z_hidden, 1)) #hardcode 1 layer
             self.ch_dec.append(VariationalBlock(self.phi_z_hidden + self.h_size, self.dec_hidden, self.n_feats[ch], self.dec_n, sigmoid_mean=False))
 
             ### RNN 
@@ -276,7 +311,15 @@ class MCRNNVAE(nn.Module):
         for ch in range(self.n_channels):
             self.varname.append(['feat.' + str(j) for j in range(self.n_feats[ch])])
 
-
+    def dropout_fn(self, lv_ch):
+        # Dropout function.
+        #Apply a variational dropout to each channel.
+        #a single channel
+        alpha = torch.exp(self.log_alpha.detach())
+        do = alpha / (alpha + 1)
+        # lv_out = []
+        lv_out = lv_ch * (do < self.dropout_threshold).float()
+        return lv_out
 
     def sample_from(self, qzx):
 
@@ -289,13 +332,106 @@ class MCRNNVAE(nn.Module):
             zx = qzx.loc
         return zx
 
+    def step_predict(self, xt_list, ht_list, av_ch=None):
+        """
+        Step for the function predict, that takes into account
+        the possible available or not channel at a single time step.
 
-    def step(self, xt_list, ht_list, sample=False, av_ch=None):
+        Depending on the av_ch, the channels that are indicated there
+        are predicted as usual, and the others are inferred from prior 
+        and other channels.
+
+        av_ch should be the same size as xt_list and correspond to 
+        the channels included in xt_list. Ht list should be the full
+        list
+        """
+        av_ch = self.n_channels if av_ch is None else av_ch
+        hnext_list = []
+        z_prior_list = []
+        zx_t_list = []
+        qzx_t_list = []
+        pxz_t_list = []
+        phi_zx_list = []
+        phi_x_list = []
+
+        #For each available channel
+        for i in range(self.n_channels):
+            ht = ht_list[i]
+            z_prior = self.ch_priors[i](ht[-1]) # get the prior from the hidden state
+            if i in av_ch:
+                #If we have available channel, do normal pipeline 
+                xt = xt_list[av_ch.index(i)]
+                x_phi = self.ch_phi_x[i](xt) # Input transformation
+                #x_phi = xt  #If we dont want to use the input transformation
+                phi_x_list.append(x_phi)
+                x = torch.cat([x_phi, ht[-1]], 1) # append input with hidden
+                qzx_t = self.ch_enc[i](x) # Run through the encoder
+                z_t = self.sample_from(qzx_t) #Sample from q(z|x)
+                qzx_t_list.append(qzx_t)
+            else:
+                z_t = self.sample_from(z_prior) #sample from the prior
+                qzx_t_list.append(None) #To solve mistakes, but not used in sampling (no encoder!)
+                phi_x_list.append(None) #Not used in samples
+
+            ###DROPOUT
+            if not self.training:
+                z_t = self.dropout_fn(z_t)  
+
+            #Apply phi_z
+            phi_zx_t = self.ch_phi_z[i](z_t)
+            #phi_zx_t = z_t
+            phi_zx_list.append(phi_zx_t)  # In the sampling moment, it is necessary
+
+            #Decoder, for each separate channel
+            x = torch.cat([phi_zx_t, ht[-1]], 1)
+
+            pxz_t_list.append([])
+    
+            for j in range(self.n_channels):
+                pxz_t = self.ch_dec[j](x)  # Decode from each different channel
+                pxz_t_list[i].append(pxz_t)
+
+            z_prior_list.append(z_prior)
+            zx_t_list.append(z_t)
+
+
+        # Second part: generate the samples if needed, we needed to generate
+        # all the p_xz 
+        for i in range(self.n_channels):
+
+            if i in av_ch:
+                x = torch.cat([phi_zx_list[i], phi_x_list[i]],1).unsqueeze(0)
+                _, hnext = self.ch_RNN[i](x, ht) # Recurrence step
+
+                #Save results
+                hnext_list.append(hnext)
+            else:
+                #If we are sampling, we need to obtain x_hat from the decoder
+                x_hat = torch.stack([pxz_t_list[e][i].loc for e in range(self.n_channels)]).mean(0)
+                x_phi = self.ch_phi_x[i](x_hat)
+                #x_phi = x_hat
+
+                x = torch.cat([phi_zx_list[i], x_phi],1).unsqueeze(0)
+                _, hnext = self.ch_RNN[i](x, ht) # Recurrence step
+
+                #Save results
+                hnext_list.append(hnext)
+
+        # Return xt_list, in the not sampling case, this does nothing, in the other case, returns the reconstructed x
+        return hnext_list, z_prior_list, zx_t_list, qzx_t_list, pxz_t_list
+
+
+        # The channels that are not available
+
+    def step(self, xt_list, ht_list, curr_channels, av_ch=None):
         """
         Function that implements the forward pass 
         of a single recurrent step for all the channels.
+        curr_channels contains the number of the channels contained in xt_list
+
+        ht_list is 
         """
-        av_ch = range(self.n_channels) if av_ch is None else av_ch
+        av_ch = curr_channels if av_ch is None else av_ch
         hnext_list = []
         z_prior_list = []
         zx_t_list = []
@@ -305,60 +441,48 @@ class MCRNNVAE(nn.Module):
         phi_zx_list = []
 
         # First part: get all the decoders
-        for ch in range(self.n_channels):
-            ht = ht_list[ch]
+        #Assume that the n_channels in the input can be variable
+        for i in range(len(curr_channels)):
+            ch = curr_channels[i]
+            ht = ht_list[i]
             z_prior = self.ch_priors[ch](ht[-1]) # get the prior from the hidden state
             
-            if not sample:
-                #If we are not sampling from the prior, we have an input value
-                xt = xt_list[ch]
-                x_phi = self.ch_phi_x[ch](xt) # Input transformation
-                x = torch.cat([x_phi, ht[-1]], 1) # append input with hidden
-                qzx_t = self.ch_enc[ch](x) # Run through the encoder
-                z_t = self.sample_from(qzx_t) #Sample from q(z|x)
-                qzx_t_list.append(qzx_t)
+            #If we are not sampling from the prior, we have an input value
+            xt = xt_list[i]
+            x_phi = self.ch_phi_x[ch](xt) # Input transformation
+            # x_phi = xt  #If we dont want to use the input transformation
+            x = torch.cat([x_phi, ht[-1]], 1) # append input with hidden
+            qzx_t = self.ch_enc[ch](x) # Run through the encoder
+            z_t = self.sample_from(qzx_t) #Sample from q(z|x)
+            qzx_t_list.append(qzx_t)
 
-            else:
-                #Sample from the prior    
-                z_t = self.sample_from(z_prior) #sample from the prior
+            ###DROPOUT
+            if not self.training:
+                z_t = self.dropout_fn(z_t)  
 
             #Apply phi_z
             phi_zx_t = self.ch_phi_z[ch](z_t)
+            # phi_zx_t = z_t
             phi_zx_list.append(phi_zx_t)  # In the sampling moment, it is necessary
 
             #Decoder, for each separate channel
             x = torch.cat([phi_zx_t, ht[-1]], 1)
+
             pxz_t_list.append([])
     
+            #Decode from each other channel
             for j in range(self.n_channels):
                 pxz_t = self.ch_dec[j](x)  # Decode from each different channel
-                pxz_t_list[ch].append(pxz_t)
+                pxz_t_list[i].append(pxz_t)
 
             z_prior_list.append(z_prior)
             zx_t_list.append(z_t)
 
-            if not sample:
-                x = torch.cat([phi_zx_t, x_phi],1).unsqueeze(0)
-                _, hnext = self.ch_RNN[ch](x, ht) # Recurrence step
+            x = torch.cat([phi_zx_t, x_phi],1).unsqueeze(0)
+            _, hnext = self.ch_RNN[ch](x, ht) # Recurrence step
 
-                #Save results
-                hnext_list.append(hnext)
-
-        # Second part: generate the samples if needed, we needed to generate
-        # all the p_xz 
-        if sample:
-            for ch in range(self.n_channels):
-                #If we are sampling, we need to obtain x_hat from the decoder
-                #TODO:QUESTION FOR MARCO is this the correct way to obtain the x_hat?
-                x_hat = torch.stack([pxz_t_list[e][ch].loc for e in av_ch]).mean(0)
-                x_phi = self.ch_phi_x[ch](x_hat)
-
-                x = torch.cat([phi_zx_list[ch], x_phi],1).unsqueeze(0)
-                _, hnext = self.ch_RNN[ch](x, ht) # Recurrence step
-
-                #Save results
-                hnext_list.append(hnext)
-                qzx_t_list.append(None) #To solve mistakes, but not used in sampling (no decoder!)
+            #Save results
+            hnext_list.append(hnext)
 
         # Return xt_list, in the not sampling case, this does nothing, in the other case, returns the reconstructed x
         return hnext_list, z_prior_list, zx_t_list, qzx_t_list, pxz_t_list
@@ -384,20 +508,29 @@ class MCRNNVAE(nn.Module):
         pxz = [[] for _ in range(self.n_channels)]
         zp = [[] for _ in range(self.n_channels)]
         # ITERATE OVER THE SEQUENCE, at each time point
-        for tp in range(x[0].size(0)):
-            #Need to repopulate the list so that it contains a single time point, still being a list
-            x_t = [x_ch[tp, :, :] for x_ch in x]
-            hnext, zp_t, zx_t, qzx_t, pxz_t = self.step(x_t, ht)
-            # recover the initial shape (nch, nt, nbatch, nfeat)
-            # bit convoluted really
-            for i in range(self.n_channels):
-                #this xnext needs to be averaged across all the values, as it is reocnstructed from all channels
-                zx[i].append(zx_t[i])
-                pxz[i].append(pxz_t[i])
-                zp[i].append(zp_t[i])
-                qzx[i].append(qzx_t[i])
-            ht = hnext
-        #Return similar to the mcvae implementation
+        #MISTAKE: HERE WE ALWAYS ITERATE, AT MAX, FROM THE NTP FROM CHANNEL 0. SHOULD BE FROM THE MAX
+        # OR AT LEAST FORCE ALL TPS TO HAVE THE SAME SIZE
+        curr_channels = list(range(self.n_channels))
+        tp = 0
+        #Mentre hi hagi canals uqe encara tinguin tps
+        while len(curr_channels) > 0:
+            #Select only channels that have that tp in their data
+            curr_channels = [i for i, x_ch in enumerate(x) if tp < x_ch.shape[0]]
+            x_t = [x_ch[tp, :, :] for i, x_ch in enumerate(x) if i in curr_channels]
+            h_t = [hti for i, hti in enumerate(ht) if i in curr_channels]
+            
+            tp += 1
+            #Only run those channels
+            hnext, zp_t, zx_t, qzx_t, pxz_t = self.step(x_t, h_t, curr_channels)
+            #Recover the initial shape. Append each channel where it corresponds
+            for i in range(len(x_t)):
+                ch = curr_channels[i]
+                zx[ch].append(zx_t[i])
+                pxz[ch].append(pxz_t[i])
+                zp[ch].append(zp_t[i])
+                qzx[ch].append(qzx_t[i])
+                ht[ch] = hnext[i]
+
         return {
             'x' : x,
             'qzx': qzx,
@@ -424,12 +557,13 @@ class MCRNNVAE(nn.Module):
         av_ch is the channels that we will be using for reconstruction. If its None, we just use all of them
         We are predicting the exact reconstuction, and its latent space
 
-        NEED TO LOOK INTO THIS FOR THE MC VARIABLE PART. CAN WE REALLY DO A FULL FORWARD PASS, OR WILL PROPAGATE ERRORS?
+        NEED TO UDPATE FOR THE NEW PROCEDURE OF COMPUTING VARIABLE NUMBER OF TPS
         """
         self.eval()
         av_ch = range(self.n_channels) if av_ch is None else av_ch
 
-        data_ntp = data[0].size(0)
+        #Again, això està malament. channels poden tenir differnet num de tps!
+        # data_ntp = data[0].size(0)
         if self.is_fitted:
             with torch.no_grad():
                 # initalize ht
@@ -444,11 +578,11 @@ class MCRNNVAE(nn.Module):
                 #For each timepoint
                 for tp in range(nt):
                     #Need to repopulate the list so that it contains a single time point, still being a list
-                    #If we sample, we just use the 
-                    if tp < data_ntp: x_t = [x_ch[tp, :, :] for x_ch in data]
-                    else: x_t = None
+                    #If we sample, we just use the
+                    curr_channels = [i for i, x_ch in enumerate(data) if tp < x_ch.shape[0]]
+                    x_t = [x_ch[tp, :, :] for i, x_ch in enumerate(data) if i in curr_channels]
                     # If we have x information, we do a normal step
-                    hnext, zp_t, z_t, qzx_t, pxz_t = self.step(x_t, ht, tp >= data_ntp, av_ch)
+                    hnext, zp_t, z_t, qzx_t, pxz_t = self.step_predict(x_t, ht, curr_channels)
 
                     for i in range(self.n_channels):
                         #this xnext needs to be averaged across all the values, as it is reocnstructed from all channels
@@ -461,10 +595,15 @@ class MCRNNVAE(nn.Module):
                 # For xnext, we need to obtain the average of the reconstruction across channels and timepoints
                 # THIS IS THE PART where we need to take into account the mask. We cannot reconstruct from missing channels,
                 # as that value is WRONG and we are doing the reconstruction wrong. THIS NEEDS TO BE TAKEN INTO ACCOUNT
+                #Right now im not using any mask and basically use everything.
+                #However, this is an open problem and I probably should ask Marco about this. Which channels should I use for reconstruction'
+                #for example, for a time point where we have no available data, what do we do?
+                
                 X_hat = [[] for _ in range(self.n_channels)]
                 for i in range(self.n_channels):
-                    for t in range(nt):
-                        xhat = torch.stack([pxz[ch][t][i].loc.cpu().detach() for ch in av_ch]).mean(0)
+                    for tp in range(nt):
+                        # curr_channels = [i for i, x_ch in enumerate(data) if tp < x_ch.shape[0]]
+                        xhat = torch.stack([pxz[ch][tp][i].loc.cpu().detach() for ch in av_ch]).mean(0)
                         X_hat[i].append(xhat.numpy())
                     X_hat[i] = np.asarray(X_hat[i]) #Convert to np array
 
@@ -592,30 +731,39 @@ class MCRNNVAE(nn.Module):
         kl = 0
         ll = 0
 
-        # For each time point,
-        for t in range(X[0].size(0)):
-            x = [x_ch[t, :, :] for x_ch in X]
-            mask_i = [mask_ch[t, :, 0] for mask_ch in mask]
-
-            for i in range(self.n_channels):
+        curr_channels = list(range(self.n_channels))
+        t = 0
+        #Mentre hi hagi canals uqe encara tinguin tps
+        while len(curr_channels) > 0:
+            #Select only channels that have that tp in their data
+            curr_channels = [i for i, x_ch in enumerate(X) if t < x_ch.shape[0]]
+            x = [x_ch[t, :, :] for i, x_ch in enumerate(X) if i in curr_channels]
+            mask_i = [mask_ch[t, :, 0] for i, mask_ch in enumerate(mask) if i in curr_channels]
+            for i in range(len(curr_channels)):
+                ch = curr_channels[i]
                 # KL divergence
                 #the second distribution is not the normal, is the prior!!
-                kl_base = self.KL_fn(qzx[i][t], zp[i][t]).sum(1)
+                #if t == 0:
+                # kl_base = KL_log_uniform(qzx[ch][t]).sum(1)
+                #else:
+                kl_base = self.KL_fn(qzx[ch][t], zp[ch][t]).sum(1)
                 # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
                 if not torch.sum(mask_i[i]) == 0:
                     kl_masked = torch.masked_select(kl_base, mask_i[i])
                     kl += kl_masked.mean(0)
 
-                for j in range(self.n_channels):
+                for j in range(len(curr_channels)):
+                    ch2 = curr_channels[j]
                     # i = latent comp; j = decoder
                     # Direct (i=j) and Crossed (i!=j) Log-Likelihood
-                    ll_base = pxz[i][t][j].log_prob(x[j]).sum(1)
+                    ll_base = pxz[ch][t][ch2].log_prob(x[j]).sum(1)
                     # compute the combined mask for both inputs
                     combined_mask = torch.logical_and(mask_i[i], mask_i[j]) 
                     # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
                     if not torch.sum(combined_mask) == 0:
                         ll_masked = torch.masked_select(ll_base, combined_mask)
                         ll += ll_masked.mean(0)
+            t += 1
 
         total = kl - ll
 
@@ -631,6 +779,19 @@ class MCRNNVAE(nn.Module):
         else:
             return losses
 
+    # property is 
+    # So that dropout and kept_components can be accessed as an atribute.
+    @property
+    def dropout(self):
+        alpha = torch.exp(self.log_alpha.detach())
+        return alpha / (alpha + 1)
+
+    @property
+    def kept_components(self):
+        #Get the ocmponents that were kept more.
+        keep = (self.dropout.reshape(-1) < self.dropout_threshold).tolist()
+        components = [i for i, kept in enumerate(keep) if kept]
+        return components
 
     def recon_loss(self, fwd_return, target=None, mask=None):
         """ 
@@ -650,24 +811,31 @@ class MCRNNVAE(nn.Module):
 
         rec_loss = 0
         mae_loss = 0
-        # For each time point,
-        for t in range(X[0].shape[0]):
-            # Convert to tensor for calculations, if its not a tensor
-            x = [x_ch[t, :, :] for x_ch in X]
-            mask_ch = [mask_ch[t, :, 0] for mask_ch in mask]
 
-            for i in range(self.n_channels):
+        curr_channels = list(range(self.n_channels))
+        t = 0
+        #Mentre hi hagi canals uqe encara tinguin tps
+        while len(curr_channels) > 0:
+            #Select only channels that have that tp in their data
+            curr_channels = [i for i, x_ch in enumerate(X) if t < x_ch.shape[0]]
+            x = [x_ch[t, :, :] for i, x_ch in enumerate(X) if i in curr_channels]
+            mask_ch = [mask_ch[t, :, 0] for i, mask_ch in enumerate(mask) if i in curr_channels]
+
+            for i in range(len(curr_channels)):
+                ch = curr_channels[i]
                 # KL divergence
                 #the second distribution is not the normal, is the prior!!
 
-                for j in range(self.n_channels):
+                for j in range(len(curr_channels)):
+                    ch2 = curr_channels[j]
                     # i = latent comp; j = decoder
                     # Direct (i=j) and Crossed (i!=j) Log-Likelihood
                     # we only count the mae and reconstructions that exist!!
                     combined_mask = torch.logical_and(mask_ch[i], mask_ch[j])
                     if not torch.sum(combined_mask) == 0:
-                        rec_loss += reconstruction_error(target=x[j], predicted=pxz[i][t][j].loc, mask=combined_mask)
-                        mae_loss += mae(target=x[j], predicted=pxz[i][t][j].loc, mask=combined_mask)
+                        rec_loss += reconstruction_error(target=x[j], predicted=pxz[ch][t][ch2].loc, mask=combined_mask)
+                        mae_loss += mae(target=x[j], predicted=pxz[ch][t][ch2].loc, mask=combined_mask)
+            t += 1
 
         losses = {
             'rec_loss': rec_loss.item(),
