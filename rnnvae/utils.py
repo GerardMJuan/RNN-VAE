@@ -6,8 +6,9 @@ from random import randint
 from sklearn.manifold import TSNE
 from sklearn.decomposition import TruncatedSVD
 from sklearn.model_selection import GroupShuffleSplit, ShuffleSplit, StratifiedShuffleSplit
+import pickle
 
-def pandas_to_data_timeseries_var(df, feat, normalize=True, id_col = 'PTID'):
+def pandas_to_data_timeseries_var(df, suffix, feat, normalize=True, id_col = 'PTID', norm_dict = 'data/norm_values/'):
     """
     Quick function that converts a pandas dataframe with the features
     indicated by a vector "feat" (with the name of the features columns) and "id_col"
@@ -27,15 +28,19 @@ def pandas_to_data_timeseries_var(df, feat, normalize=True, id_col = 'PTID'):
     df_feats = df.loc[:, feat]
 
     if normalize:
+
+        #load the data
+        norm_val = pickle.load( open(f"{norm_dict}{suffix}_norm.pkl", 'rb'))
+        df_feats = (df_feats - norm_val["mean"]) / norm_val["std"]
+
         # Standarize features
-        for i in range(df_feats.shape[1]):
-            df_feats.iloc[:,i] = (df_feats.iloc[:,i] - np.mean(df_feats.iloc[:,i]))/np.std(df_feats.iloc[:,i])
+        #for i in range(df_feats.shape[1]):
+        #    df_feats.iloc[:,i] = (df_feats.iloc[:,i] - np.mean(df_feats.iloc[:,i]))/np.std(df_feats.iloc[:,i])
 
     for ptid in sample_list:
         i_list = df.index[df['PTID'] == ptid]
         feats = df_feats.iloc[i_list].values
         X.append(feats)
-
     # Return numpy dataframe
     return X
 
@@ -110,10 +115,10 @@ def load_multimodal_data_cv(csv_path, suffixes_list, type_modal, nsplit=10, norm
 
             # Return the features in the correct shape (Nsamples, timesteps, nfeatures)
             # Order the dataframes
-            X_train = pandas_to_data_timeseries_var(df_train, cols, normalize)
+            X_train = pandas_to_data_timeseries_var(df_train, suffix, cols, normalize)
             X_train_full.append(X_train)
 
-            X_test = pandas_to_data_timeseries_var(df_test, cols, normalize)
+            X_test = pandas_to_data_timeseries_var(df_test, suffix, cols, normalize)
             X_test_full.append(X_test)
         # Uncomment for debugging
         #df_train.to_csv('train.csv')
@@ -134,8 +139,9 @@ def load_multimodal_data_cv(csv_path, suffixes_list, type_modal, nsplit=10, norm
         df_test = df_test.reset_index(drop=True)
 
         for col in cov_cols:
-            Y_train[col] = pandas_to_data_timeseries_var(df_train, col, False)
-            Y_test[col] = pandas_to_data_timeseries_var(df_test, col, False)
+            # no suffix, no normalization
+            Y_train[col] = pandas_to_data_timeseries_var(df_train, None, col, False)
+            Y_test[col] = pandas_to_data_timeseries_var(df_test, None, col, False)
 
         yield X_train_full, X_test_full, Y_train, Y_test, col_lists
 
@@ -215,15 +221,15 @@ def load_multimodal_data(csv_path, suffixes_list, type_modal, train_set=0.8, nor
             # df_train = data_df.iloc[train_dataset]
             #df_test =  data_df.iloc[test_dataset]
         else:
-            df_train = data_df_base
+            df_train = data_df_base.reset_index(drop=True)
 
         # Return the features in the correct shape (Nsamples, timesteps, nfeatures)
         # Order the dataframes
-        X_train = pandas_to_data_timeseries_var(df_train, cols, normalize)
+        X_train = pandas_to_data_timeseries_var(df_train, suffix, cols, normalize)
         X_train_full.append(X_train)
 
         if test: 
-            X_test = pandas_to_data_timeseries_var(df_test, cols, normalize)
+            X_test = pandas_to_data_timeseries_var(df_test, suffix, cols, normalize)
             X_test_full.append(X_test)
         # Uncomment for debugging
         #df_train.to_csv('train.csv')
@@ -246,11 +252,11 @@ def load_multimodal_data(csv_path, suffixes_list, type_modal, train_set=0.8, nor
             df_test = df_test.reset_index(drop=True)
 
         else:
-            df_train = data_df
+            df_train = data_df.reset_index(drop=True)
 
         for col in cov_cols:
-            Y_train[col] = pandas_to_data_timeseries_var(df_train, col, False)
-            if test: Y_test[col] = pandas_to_data_timeseries_var(df_test, col, False)
+            Y_train[col] = pandas_to_data_timeseries_var(df_train, None, col, False)
+            if test: Y_test[col] = pandas_to_data_timeseries_var(df_test, None, col, False)
 
         return X_train_full, X_test_full, Y_train, Y_test, col_lists
 
@@ -290,6 +296,52 @@ def pandas_to_data_timeseries(df, feat, n_timesteps = 5, normalize=True, id_col 
 
     # Return numpy dataframe
     return X
+
+def generate_norm_values(csv_path, suffixes_list, type_modal, out_dir):
+    """
+    Generate mean and std from the training set, for normalizing training set and test set alike.
+    csv_path is where the information is stored.
+    suffixes_list: list of suffixes of each modality. values will be saved together and with the same name + '_mean' and '_std'
+    type_modal: is the type of modality, if bl or longitudinal.
+    out_dir is where the outputs will be saved.
+    """
+
+    data_df = pd.read_csv(csv_path)
+
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    data_df = data_df.sort_values(by=['PTID', 'Years_bl'], ascending=[True, True])
+
+    for (suffix, ch_type) in zip(suffixes_list, type_modal):
+
+        cols = data_df.columns.str.contains(suffix)
+        cols = data_df.columns[cols].values
+
+        #Aquests linies NO haurien de fer falta perquè ja hem assegurat que tots els Bl TINGUIN tal.
+        if ch_type == 'bl':
+            data_df_base = data_df[data_df.VISCODE == 'bl']
+        else:
+            data_df_base = data_df.copy()
+        data_df_base = data_df_base.dropna(axis=0, subset=cols)
+        data_df_base = data_df_base.reset_index(drop=True)
+
+        # Select only the subjects with nfollowups
+        ptid_list = np.unique(data_df_base["PTID"])
+        df_train = data_df_base.reset_index(drop=True)
+
+        #Generate mean and std of those features
+        df_feats = df_train.loc[:, cols]
+
+        # Generate the values
+        mean = np.mean(df_feats).values
+        std = np.std(df_feats).values
+        #Save to disk
+        norm_dict = {'mean' : mean, 'std' : std}
+
+        with open(f"{out_dir}{suffix}_norm.pkl", 'wb') as f:
+            pickle.dump(norm_dict, f, pickle.HIGHEST_PROTOCOL)
+
 
 def open_MRI_data_var(csv_path, train_set = 0.8, normalize=True, return_covariates=False):
     """
@@ -442,6 +494,5 @@ def open_MRI_data(csv_path, train_set = 0.8, n_followups=5, normalize=True, retu
             Y_test[col] = pandas_to_data_timeseries_var(df_y_test, col, n_followups, False)
 
         return X_train, X_test, Y_train, Y_test
-
 
     return X_train, X_test

@@ -7,7 +7,7 @@ https://stackoverflow.com/questions/22566692/python-how-to-plot-graph-sine-wave
 
 import numpy as np
 import random 
-
+from sklearn import preprocessing
 
 def sinus(x, p):
     """
@@ -45,7 +45,7 @@ class LatentDataGeneratorCurves():
     where the curve are applied to the z 
     """
 
-    def __init__(self, curves, ch_type, ntp, noise, lat_dim=1, n_channels=1, n_feats=10, variable_tp=False):
+    def __init__(self, curves, ch_type, ntp, noise, lat_dim=1, n_channels=1, n_feats=10, variable_tp=True):
         """
         Init the parameters and define the distribution
         curves: the type of curves of the channels. 
@@ -87,40 +87,46 @@ class LatentDataGeneratorCurves():
         Generate the number of samples
         z is ds
         """
-        z = np.random.randn(self.lat_dim,nsamples)
+        z = np.random.randn(self.lat_dim, nsamples)
 
-        #get the time points
-        X = np.sort(np.random.uniform(0, 10, (self.ntp)))   
-
-        # Create the curves
-        if self.variable_tp:
-            #remove n random items from the 
-            length = random.choice(range(self.ntp-5, self.ntp))
-            X = np.sort(np.random.uniform(0, 10, length))    
-
-        
-        #creat long curves
         Y = []
-        for ch in range(self.n_channels):
-            curve = self.curves[ch]
-            #for the number of features indicated in that curve
-            y = self.curve_dict[curve[0]](X, curve[1])
-            y = np.asarray([y_i + self.noise*np.random.normal(size=y_i.shape) for y_i in y])
-            if self.ch_type[ch] == 'bl':
-                # Select only first timepoint
-                y = [y[0]]
+        for n in range(nsamples):
 
-            Y.append(y)
+            #get the time points
+            X = np.sort(np.random.uniform(0, 10, (self.ntp)))   
 
+            # Create the curves
+            if self.variable_tp:
+                #remove n random items from the 
+                length = random.choice(range(self.ntp-5, self.ntp))
+                X = np.sort(np.random.uniform(0, 10, length))    
+
+            #creat long curves
+            Y_curve = []
+            for ch in range(self.n_channels):
+                curve = self.curves[ch]
+                #for the number of features indicated in that curve
+                y = self.curve_dict[curve[0]](X, curve[1])
+                y = np.asarray([y_i + self.noise*np.random.normal(size=y_i.shape) for y_i in y])
+                if self.ch_type[ch] == 'bl':
+                    # Select only first timepoint
+                    y = [y[0]]
+                Y_curve.append(preprocessing.scale(y))
+            Y.append(Y_curve)
+            
         self.Y_out = []
         for ch in range(self.n_channels):
             #Multiply to normal space
             Y_ch = self.W[ch]@z
+            # Standarize 
+            Y_ch = preprocessing.scale(Y_ch)
             # sum to curves
-            Y_ch = np.array([Y_ch+cur for cur in Y[ch]])
+            Y_ch_full = []
+            for n in range(nsamples):
+                Y_temp = np.array([Y_ch[:,n] + cur for cur in Y[n][ch]])
+                Y_ch_full.append(Y_temp)
 
-            self.Y_out.append(Y_ch)
-
+            self.Y_out.append(Y_ch_full)
         return z, self.Y_out
 
 class LatentDataGenerator():
@@ -258,7 +264,7 @@ class SinDataGenerator():
         pars is a dict containing the parameters
         """
         y = p["L"]/(1 + np.exp(-p["k"]*(x-p["x0"])))
-        return y 
+        return y - (p["L"]/2)
 
     def sample(self):
         """

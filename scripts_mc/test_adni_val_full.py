@@ -9,7 +9,7 @@ import torch
 from torch import nn
 import numpy as np
 from sklearn.metrics import mean_absolute_error
-from rnnvae import rnnvae_zp
+from rnnvae import rnnvae_h
 from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
 from sklearn.metrics import mean_squared_error, mean_absolute_error
@@ -82,7 +82,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     # ntp = max(X_train_list[0].shape[0], X_test_list[0].shape[0])
     ntp = max(max([x.shape[0] for x in X_train_list]), max([x.shape[0] for x in X_train_list]))
 
-    model = rnnvae_zp.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
+    model = rnnvae_h.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
                             p["hidden"], p["n_layers"], p["hidden"],
                             p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
                             p["clip"], p["n_epochs"], p["batch_size"], 
@@ -112,8 +112,8 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     model.save(out_dir, 'model.pt')
 
     # Predict the reconstructions from X_val and X_train
-    X_train_fwd = model.predict(X_train_list, nt=ntp)
-    X_test_fwd = model.predict(X_test_list, nt=ntp)
+    X_train_fwd = model.predict(X_train_list, mask_train_list, nt=ntp)
+    X_test_fwd = model.predict(X_test_list, mask_test_list, nt=ntp)
 
     # Unpad using the masks
     #plot validation and 
@@ -133,12 +133,20 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     print('MSE over the test set: ' + str(test_loss["mae"]))
     print('Reconstruction loss the train set: ' + str(test_loss["rec_loss"]))
     
+    pred_results = {}
+    for ch_name in p["ch_names"][:3]:
+        pred_results[f"pred_{ch_name}_mae"] = []
+
+    rec_results = {}
+    for ch_name in p["ch_names"]:
+        rec_results[f"recon_{ch_name}_mae"] = []
+
+    results = {**pred_results, **rec_results}
+
     ######################
     ## Prediction of last time point
     ######################
-    
-    # Test data without last timepoint
-    # X_test_tensors do have the last timepoint
+
     X_test_list_minus = []
     X_test_tensors = []
     mask_test_list_minus = []
@@ -154,43 +162,77 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
     # Run prediction
     #this is terribly programmed holy shit
-    X_test_fwd_minus = model.predict(X_test_list_minus, nt=ntp)
+    X_test_fwd_minus = model.predict(X_test_list_minus, mask_test_list_minus, nt=ntp)
     X_test_xnext = X_test_fwd_minus["xnext"]
-    last_tp_mse = 0
-    #for each channel
-    for i in range(len(X_test_tensors)):
-        #For each subject, select the tp of the mask
-        last_tp_mse_ch = 0
-        n_mae = 0
-        for j in range(len(X_test_tensors[i])):
-            tp = len(X_test_tensors[i][j]) - 1
-            last_tp_mse_ch += mean_squared_error(X_test_tensors[i][j][tp,:], X_test_xnext[i][tp, j, :])
-            n_mae += 1
-        #compute the mean
-        last_tp_mse += last_tp_mse_ch / n_mae
-    #Compute MAE over last timepoint
+
+    # Test data without last timepoint
+    # X_test_tensors do have the last timepoint
+    i = 0
+    for (X_ch, ch) in zip(X_test[:3], p["ch_names"][:3]):
+        #Select a single channel
+        print(f'testing for {ch}')
+        y_true = [x[-1] for x in X_ch if len(x) > 1]
+        last_tp = [len(x)-1 for x in X_ch] # last tp is max size of original data minus one
+        y_pred = []
+        # for each subject, select last tp
+        j = 0
+        for tp in last_tp:
+            if tp < 1: 
+                j += 1
+                continue # ignore tps with only baseline
+                
+            y_pred.append(X_test_xnext[i][tp, j, :])
+            j += 1
+
+        #Process it to predict it
+        mae_tp_ch = mean_absolute_error(y_true, y_pred)
+        #save the result
+        results[f'pred_{ch}_mae'] = mae_tp_ch
+        i += 1
 
     ############################
     ## Test reconstruction for each channel, using the other one 
     ############################
     # For each channel
-    rec_results = {}
-    for i in range(len(X_test_list)):
-        curr_name = p["ch_names"][i]
-        av_ch = list(range(len(X_test_list)))
-        av_ch.remove(i)
-        # try to reconstruct it from the other ones
-        ch_recon = model.predict(X_test_list, nt=ntp, av_ch=av_ch)
-        #for all existing timepoints
-        mae_loss = 0
-        for t in range(len(mask_test_list[i])):
-            mask_channel = mask_test_list[i][t,:,0]
-            mae_loss += rnnvae_zp.mae(target=X_test_list[i][t].cpu(), predicted=ch_recon["xnext"][i][t], mask=mask_channel)
+    if p["n_channels"] > 1:
 
-        # Get MAE result for that specific channel over all timepoints
-        #for this, i also need the mask
+        for i in range(len(X_test)):
+            curr_name = p["ch_names"][i]
+            av_ch = list(range(len(X_test)))
+            av_ch.remove(i)
+            # try to reconstruct it from the other ones
+            ch_recon = model.predict(X_test_list, mask_test_list, nt=ntp, av_ch=av_ch, task='recon')
+            #for all existing timepoints
 
-        rec_results[f"recon_{curr_name}_mae"] = mae_loss.item()
+            y_true = X_test[i]
+            # swap dims to iterate over subjects
+            y_pred = np.transpose(ch_recon["xnext"][i], (1,0,2))
+            y_pred = [x_pred[:len(x_true)] for (x_pred, x_true) in zip(y_pred, y_true)]
+
+            #prepare it timepoint wise
+            y_pred = [tp for subj in y_pred for tp in subj]
+            y_true = [tp for subj in y_true for tp in subj]
+
+            mae_rec_ch = mean_absolute_error(y_true, y_pred)
+
+            # Get MAE result for that specific channel over all timepoints
+            results[f"recon_{curr_name}_mae"] = mae_rec_ch
+
+    loss = {
+        "mae_train" : train_loss["mae"],
+        "rec_train" : train_loss["rec_loss"],
+        "mae_test": test_loss["mae"],
+        "loss_total": model.loss['total'][-1],
+        "loss_kl": model.loss['kl'][-1],
+        "loss_ll": model.loss['ll'][-1],
+    }
+
+    if p["dropout"]:
+        loss["dropout_comps"] = model.dropout_comp
+
+    loss = {**loss, **results}
+
+    print(loss)
 
     # Dir for projections
     proj_path = 'z_proj/'
@@ -250,20 +292,6 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
     plot_latent_space(model, qzx_test, ntp, classificator=classif_test, pallete_dict=pallete_dict, plt_tp='all',
                     all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample + '_test', mask=mask_test_list)
-    loss = {
-        "mae_train" : train_loss["mae"],
-        "rec_train" : train_loss["rec_loss"],
-        "mae_test": test_loss["mae"],
-        "mae_last_tp" : last_tp_mse,
-        "loss_total": model.loss['total'][-1],
-        "loss_kl": model.loss['kl'][-1],
-        "loss_ll": model.loss['ll'][-1],
-    }
-
-    if p["dropout"]:
-        loss["dropout_comps"] = model.dropout_comp
-
-    loss = {**loss, **rec_results}
 
     return loss
 
@@ -279,13 +307,13 @@ if __name__ == "__main__":
     ch_type = ["long", "long", "long", "bl", 'bl']
 
     params = {
-        "h_size": 50,
-        "z_dim": 15,
-        "hidden": 50,
+        "h_size": 120,
+        "z_dim": 30,
+        "hidden": 120,
         "n_layers": 1,
-        "n_epochs": 3000,
+        "n_epochs": 1000,
         "clip": 10,
-        "learning_rate": 1e-3,
+        "learning_rate": 2e-3,
         "batch_size": 128,
         "seed": 1714,
         "n_channels": len(channels),
@@ -293,10 +321,10 @@ if __name__ == "__main__":
         "ch_type": ch_type,
         "phi_layers": True,
         "sig_mean": False,
-        "dropout": True,
-        "drop_th": 0.4
+        "dropout": False,
+        "drop_th": 0.3
     }
 
-    out_dir = "experiments_mc_newloss/h_doublefix/"
+    out_dir = "experiments_mc_newloss/allch_testing/"
     csv_path = "data/multimodal_no_petfluid_train.csv"
     loss = run_experiment(params, csv_path, out_dir, channels)

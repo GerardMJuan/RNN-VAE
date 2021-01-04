@@ -1,6 +1,8 @@
 """
 Metaexperiment for adni using baseline data and a CV procedure
+For only one channel
 """
+
 import os
 import sys
 sys.path.insert(0, os.path.abspath('./'))
@@ -11,15 +13,19 @@ import time
 from datetime import timedelta
 import pandas as pd
 
-channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
-names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
-ch_type = ["long", "long", "long", "bl", 'bl']
+#channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
+#names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
+#ch_type = ["long", "long", "long", "bl", 'bl']
+
+channels = ['_mri_cort']
+names = ["MRI cort"]
+ch_type = ["long"]
 
 params = {
     "h_size": [300,500],
     "z_dim": [20,30,50],
     "hidden": [300,500],
-    "n_layers": [1,2],
+    "n_layers": [0,1,2],
     "n_epochs": [1300],
     "clip": [10],
     "learning_rate": [1e-3],
@@ -39,7 +45,7 @@ csv_path = "data/multimodal_no_petfluid_train.csv"
 #Create two lists, that will store the dictionaries of the loss that later will become a dataframe
 list_loss = []
 
-base_out_dir = "experiments_mc_cv/results_cv_full_2/"
+base_out_dir = "experiments_mc_cv/cv_mri_cort_2/"
 
 if not os.path.exists(base_out_dir):
     os.makedirs(base_out_dir)

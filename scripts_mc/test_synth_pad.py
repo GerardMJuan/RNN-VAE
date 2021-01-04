@@ -94,7 +94,9 @@ def run_experiment(p, out_dir):
                             p["hidden"], p["n_layers"], p["hidden"],
                             p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
                             p["clip"], p["n_epochs"], p["batch_size"], 
-                            p["n_channels"], p["n_feats"], p["model_name_dict"], DEVICE)
+                            p["n_channels"], p["ch_type"], p["n_feats"], DEVICE, print_every=100, 
+                            phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
+                            dropout=p["dropout"], dropout_threshold=p["drop_th"])
 
     optimizer = torch.optim.Adam(model.parameters(), lr=p["learning_rate"])
     model.optimizer = optimizer
@@ -180,35 +182,42 @@ def run_experiment(p, out_dir):
 if __name__ == "__main__":
 
     curves = [
-        [("sigmoid", {"L": 1, "k": 1, "x0": 5}),    
-        ("sin", {"A": 1, "f": 0.2}),
+        [("sin", {"A": 1, "f": 0.5}),    
+        ("sigmoid", {"L": 2, "k": -15, "x0": 5}),
         ("cos", {"A": 1, "f": 0.2})],
-        [("sigmoid", {"L": 1, "k": -15, "x0": 5}),
-        ("sigmoid", {"L": 1, "k": 5, "x0": 5})]
+        [("sin", {"A": 1, "f": 0.2}),
+        ("sigmoid", {"L": -2, "k": 5, "x0": 5})]
         ]
     
     names = {"0":"c1", 
              "1":"c2"}
 
+    ch_type = ["long", "long"]
+
     ### Parameter definition
     params = {
         "h_size": 20,
-        "z_dim": 5,
+        "z_dim": 10,
         "hidden": 20,
         "n_layers": 1,
-        "n_epochs": 400,
+        "n_epochs": 500,
         "clip": 10,
-        "learning_rate": 1e-3,
+        "learning_rate": 1e-2,
         "batch_size": 128,
         "seed": 1714,
         "curves": curves,
-        "ntp": 15,
-        "noise": 0.2,
+        "ntp": 10,
+        "noise": 0.1,
         "nsamples": 300,
         "n_channels": len(curves),
         "n_feats": [len(x) for x in curves],
-        "model_name_dict": names
+        "model_name_dict": names,
+        "ch_type": ch_type,
+        "phi_layers": True,
+        "sig_mean": False,
+        "dropout": False,
+        "drop_th": 0.4
     }
 
-    out_dir = "experiments_mc/synth_nopadding/"
+    out_dir = "experiments_mc_newloss/synth_padding/"
     loss = run_experiment(params, out_dir)

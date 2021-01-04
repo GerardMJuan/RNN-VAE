@@ -96,144 +96,148 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     model.optimizer = optimizer
 
     model = model.to(DEVICE)
-
+    
     # Fit the model
-    model.fit(X_train_list, X_test_list, mask_train_list, mask_test_list)
+    # FIT IT FOR THE NUMBER OF EPOCHS, X TIMES
+    ntimes = 10
+    for nrep in range(ntimes):
+        print(nrep)
+        model.fit(X_train_list, X_test_list, mask_train_list, mask_test_list)
 
-    #fit the model after changing the lr
-    if p["dropout"]:
-        print("Print the dropout")
-        print(model.dropout_comp)
+        #fit the model after changing the lr
+        if p["dropout"]:
+            print("Print the dropout")
+            print(model.dropout_comp)
 
-    ### After training, save the model!
-    model.save(out_dir, 'model.pt')
+        ### After training, save the model!
+        model.save(out_dir, 'model.pt')
 
-    # Predict the reconstructions from X_val and X_train
-    X_train_fwd = model.predict(X_train_list, mask_train_list, nt=ntp)
-    X_test_fwd = model.predict(X_test_list, mask_test_list, nt=ntp)
+        # Predict the reconstructions from X_val and X_train
+        X_train_fwd = model.predict(X_train_list, mask_train_list, nt=ntp)
+        X_test_fwd = model.predict(X_test_list, mask_test_list, nt=ntp)
 
-    # Unpad using the masks
-    #plot validation and 
-    plot_total_loss(model.loss['total'], model.val_loss['total'], "Total loss", out_dir, "total_loss.png")
-    plot_total_loss(model.loss['kl'], model.val_loss['kl'], "kl_loss", out_dir, "kl_loss.png")
-    plot_total_loss(model.loss['ll'], model.val_loss['ll'], "ll_loss", out_dir, "ll_loss.png") #Negative to see downard curve
+        # Unpad using the masks
+        #plot validation and 
+        plot_total_loss(model.loss['total'], model.val_loss['total'], "Total loss", out_dir, "total_loss.png")
+        plot_total_loss(model.loss['kl'], model.val_loss['kl'], "kl_loss", out_dir, "kl_loss.png")
+        plot_total_loss(model.loss['ll'], model.val_loss['ll'], "ll_loss", out_dir, "ll_loss.png") #Negative to see downard curve
 
-    #Compute mse and reconstruction loss
-    #General mse and reconstruction over 
-    # test_loss = model.recon_loss(X_test_fwd, target=X_test_pad, mask=mask_test_tensor)
-    train_loss = model.recon_loss(X_train_fwd, target=X_train_list, mask=mask_train_list)
-    test_loss = model.recon_loss(X_test_fwd, target=X_test_list, mask=mask_test_list)
+        #Compute mse and reconstruction loss
+        #General mse and reconstruction over 
+        # test_loss = model.recon_loss(X_test_fwd, target=X_test_pad, mask=mask_test_tensor)
+        train_loss = model.recon_loss(X_train_fwd, target=X_train_list, mask=mask_train_list)
+        test_loss = model.recon_loss(X_test_fwd, target=X_test_list, mask=mask_test_list)
 
-    print('MSE over the train set: ' + str(train_loss["mae"]))
-    print('Reconstruction loss over the train set: ' + str(train_loss["rec_loss"]))
+        print('MSE over the train set: ' + str(train_loss["mae"]))
+        print('Reconstruction loss over the train set: ' + str(train_loss["rec_loss"]))
 
-    print('MSE over the test set: ' + str(test_loss["mae"]))
-    print('Reconstruction loss the train set: ' + str(test_loss["rec_loss"]))
+        print('MSE over the test set: ' + str(test_loss["mae"]))
+        print('Reconstruction loss the train set: ' + str(test_loss["rec_loss"]))
 
-    pred_results = {}
-    for ch_name in p["ch_names"][:3]:
-        pred_results[f"pred_{ch_name}_mae"] = []
+        pred_results = {}
+        for ch_name in p["ch_names"][:3]:
+            pred_results[f"pred_{ch_name}_mae"] = []
 
-    rec_results = {}
-    for ch_name in p["ch_names"]:
-        rec_results[f"recon_{ch_name}_mae"] = []
+        rec_results = {}
+        for ch_name in p["ch_names"]:
+            rec_results[f"recon_{ch_name}_mae"] = []
 
-    results = {**pred_results, **rec_results}
+        results = {**pred_results, **rec_results}
 
-    ######################
-    ## Prediction of last time point
-    ######################
+        ######################
+        ## Prediction of last time point
+        ######################
 
-    # FUTURE TWO TP
-    X_test_list_minus = []
-    X_test_tensors = []
-    mask_test_list_minus = []
-    for x_ch in X_test:
-        X_test_tensor = [ torch.FloatTensor(t[:-1,:]) for t in x_ch]
-        X_test_tensor_full = [ torch.FloatTensor(t) for t in x_ch]
-        X_test_tensors.append(X_test_tensor_full)
-        X_test_pad = nn.utils.rnn.pad_sequence(X_test_tensor, batch_first=False, padding_value=np.nan)
-        mask_test = ~torch.isnan(X_test_pad)
-        mask_test_list_minus.append(mask_test.to(DEVICE))
-        X_test_pad[torch.isnan(X_test_pad)] = 0
-        X_test_list_minus.append(X_test_pad.to(DEVICE))
+        # FUTURE TWO TP
+        X_test_list_minus = []
+        X_test_tensors = []
+        mask_test_list_minus = []
+        for x_ch in X_test:
+            X_test_tensor = [ torch.FloatTensor(t[:-1,:]) for t in x_ch]
+            X_test_tensor_full = [ torch.FloatTensor(t) for t in x_ch]
+            X_test_tensors.append(X_test_tensor_full)
+            X_test_pad = nn.utils.rnn.pad_sequence(X_test_tensor, batch_first=False, padding_value=np.nan)
+            mask_test = ~torch.isnan(X_test_pad)
+            mask_test_list_minus.append(mask_test.to(DEVICE))
+            X_test_pad[torch.isnan(X_test_pad)] = 0
+            X_test_list_minus.append(X_test_pad.to(DEVICE))
 
-    # Run prediction
-    #this is terribly programmed holy shit
-    X_test_fwd_minus = model.predict(X_test_list_minus, mask_test_list_minus, nt=ntp)
-    X_test_xnext = X_test_fwd_minus["xnext"]
+        # Run prediction
+        #this is terribly programmed holy shit
+        X_test_fwd_minus = model.predict(X_test_list_minus, mask_test_list_minus, nt=ntp)
+        X_test_xnext = X_test_fwd_minus["xnext"]
 
-    # Test data without last timepoint
-    # X_test_tensors do have the last timepoint
-    i = 0
-    # import pdb; pdb.set_trace()
-    for (X_ch, ch) in zip(X_test[:3], p["ch_names"][:3]):
-        #Select a single channel
-        print(f'testing for {ch}')
-        y_true = [x[-1] for x in X_ch if len(x) > 1]
-        last_tp = [len(x)-1 for x in X_ch] # last tp is max size of original data minus one
-        y_pred = []
-        # for each subject, select last tp
-        j = 0
-        for tp in last_tp:
-            if tp < 1: 
+        # Test data without last timepoint
+        # X_test_tensors do have the last timepoint
+        i = 0
+        # import pdb; pdb.set_trace()
+        for (X_ch, ch) in zip(X_test[:3], p["ch_names"][:3]):
+            #Select a single channel
+            print(f'testing for {ch}')
+            y_true = [x[-1] for x in X_ch if len(x) > 1]
+            last_tp = [len(x)-1 for x in X_ch] # last tp is max size of original data minus one
+            y_pred = []
+            # for each subject, select last tp
+            j = 0
+            for tp in last_tp:
+                if tp < 1: 
+                    j += 1
+                    continue # ignore tps with only baseline
+                    
+                y_pred.append(X_test_xnext[i][tp, j, :])
                 j += 1
-                continue # ignore tps with only baseline
-                
-            y_pred.append(X_test_xnext[i][tp, j, :])
-            j += 1
 
-        #Process it to predict it
-        mae_tp_ch = mean_absolute_error(y_true, y_pred)
-        #save the result
-        results[f'pred_{ch}_mae'] = mae_tp_ch
-        i += 1
+            #Process it to predict it
+            mae_tp_ch = mean_absolute_error(y_true, y_pred)
+            #save the result
+            results[f'pred_{ch}_mae'] = mae_tp_ch
+            i += 1
 
-    ############################
-    ## Test reconstruction for each channel, using the other one 
-    ############################
-    # For each channel
-    if p["n_channels"] > 1:
+        ############################
+        ## Test reconstruction for each channel, using the other one 
+        ############################
+        # For each channel
+        if p["n_channels"] > 1:
 
-        for i in range(len(X_test)):
-            curr_name = p["ch_names"][i]
-            av_ch = list(range(len(X_test)))
-            av_ch.remove(i)
-            # try to reconstruct it from the other ones
-            ch_recon = model.predict(X_test_list, mask_test_list, nt=ntp, av_ch=av_ch, task='recon')
-            #for all existing timepoints
+            for i in range(len(X_test)):
+                curr_name = p["ch_names"][i]
+                av_ch = list(range(len(X_test)))
+                av_ch.remove(i)
+                # try to reconstruct it from the other ones
+                ch_recon = model.predict(X_test_list, mask_test_list, nt=ntp, av_ch=av_ch, task='recon')
+                #for all existing timepoints
 
-            y_true = X_test[i]
-            # swap dims to iterate over subjects
-            y_pred = np.transpose(ch_recon["xnext"][i], (1,0,2))
-            y_pred = [x_pred[:len(x_true)] for (x_pred, x_true) in zip(y_pred, y_true)]
+                y_true = X_test[i]
+                # swap dims to iterate over subjects
+                y_pred = np.transpose(ch_recon["xnext"][i], (1,0,2))
+                y_pred = [x_pred[:len(x_true)] for (x_pred, x_true) in zip(y_pred, y_true)]
 
-            #prepare it timepoint wise
-            y_pred = [tp for subj in y_pred for tp in subj]
-            y_true = [tp for subj in y_true for tp in subj]
+                #prepare it timepoint wise
+                y_pred = [tp for subj in y_pred for tp in subj]
+                y_true = [tp for subj in y_true for tp in subj]
 
-            mae_rec_ch = mean_absolute_error(y_true, y_pred)
+                mae_rec_ch = mean_absolute_error(y_true, y_pred)
 
-            # Get MAE result for that specific channel over all timepoints
-            results[f"recon_{curr_name}_mae"] = mae_rec_ch
+                # Get MAE result for that specific channel over all timepoints
+                results[f"recon_{curr_name}_mae"] = mae_rec_ch
 
 
-    loss = {
-        "mae_train" : train_loss["mae"],
-        "rec_train" : train_loss["rec_loss"],
-        "mae_test": test_loss["mae"],
-        "loss_total": model.loss['total'][-1],
-        "loss_kl": model.loss['kl'][-1],
-        "loss_ll": model.loss['ll'][-1],
-    }
+        loss = {
+            "mae_train" : train_loss["mae"],
+            "rec_train" : train_loss["rec_loss"],
+            "mae_test": test_loss["mae"],
+            "loss_total": model.loss['total'][-1],
+            "loss_kl": model.loss['kl'][-1],
+            "loss_ll": model.loss['ll'][-1],
+        }
 
-    if p["dropout"]:
-        loss["dropout_comps"] = model.dropout_comp
+        if p["dropout"]:
+            loss["dropout_comps"] = model.dropout_comp
 
-    loss = {**loss, **results}
-    print(loss)
+        loss = {**loss, **results}
+        print(results)
 
-
+    """
     # Dir for projections
     proj_path = 'z_proj/'
     if not os.path.exists(out_dir + proj_path):
@@ -292,29 +296,29 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
     plot_latent_space(model, qzx_test, ntp, classificator=classif_test, pallete_dict=pallete_dict, plt_tp='all',
                     all_plots=True, uncertainty=False, savefig=True, out_dir=out_dir_sample + '_test', mask=mask_test_list)
-
+    """
     return loss
 
 if __name__ == "__main__":
 
     # Testing only baseline in all channels!!
 
-    channels = ['_mri_cort']
-    names = ["MRI cort"]
-    ch_type = ["long"]
+    channels = ['_mri_vol', '_mri_cort']
+    names = ["MRI vol", "MRI cort"]
+    ch_type = ["long", "long"]
 
     #channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
     #names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
     #ch_type = ["bl", "bl", "bl", "bl", 'bl']
 
     params = {
-        "h_size": 200,
+        "h_size": 100,
         "z_dim": 30,
-        "hidden": 200,
+        "hidden": 100,
         "n_layers": 1,
-        "n_epochs": 1200,
+        "n_epochs": 100,
         "clip": 10,
-        "learning_rate": 1e-3,
+        "learning_rate": 5e-3,
         "batch_size": 128,
         "seed": 1714,
         "n_channels": len(channels),
@@ -326,6 +330,6 @@ if __name__ == "__main__":
         "drop_th": 0.3
     }
 
-    out_dir = "experiments_mc_h/singlech_cort/"
+    out_dir = "experiments_mc_newloss/single_ch_multipleepochtest/"
     csv_path = "data/multimodal_no_petfluid_train.csv"
     loss = run_experiment(params, csv_path, out_dir, channels)

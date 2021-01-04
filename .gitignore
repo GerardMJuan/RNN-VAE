@@ -138,11 +138,25 @@ experiments/
 experiments_mc/
 experiments_mc_newloss/
 experiments_mc_rnn/
+experiments_mc_cv/
+experiments_mc_h/
+experiments_mc_h2/
+experiments_mc_models/
+synth_final_tests/
+test_synth_mc/
+
+#FIGURES GEN FOLDER, CLEAN UP BEFORE UPLOADING
+fig_gen/
+evaluation/baselines/
 
 #LOGS folder
 LOGS/
+
+#hpc folder
+hpc/
 
 env.sh
 
 #results file
 baseline_loss.csv
+evaluation/baselines/baseline_loss.csv

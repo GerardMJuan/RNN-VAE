@@ -38,7 +38,7 @@ def predict_linear(X_train):
         X_lin = np.array(range(ntp)).reshape(-1, 1) # X is the time points
         linreg = LinearRegression()
         linreg.fit(X_lin, Y)
-        Y_lin_pred = linreg.predict(np.array([ntp]).reshape(-1, 1)).flatten()
+        Y_lin_pred = linreg.predict(np.array([ntp+2]).reshape(-1, 1)).flatten()
         y_pred.append(Y_lin_pred)
 
     return y_pred
@@ -137,8 +137,8 @@ def main(in_csv_train, in_csv_test, out_dir):
         #Select a single channel
         print(f'testing for {ch}')
 
-        y_true = [x[-1] for x in X_ch if len(x) > 1]
-        X_ch_train = [x[:-1] for x in X_ch if len(x) > 1 ]
+        y_true = [x[-1] for x in X_ch if len(x) > 3]
+        X_ch_train = [x[:-3] for x in X_ch if len(x) > 3]
 
         ### Constant
         y_pred_const = predict_constant(X_ch_train)
@@ -182,13 +182,13 @@ def main(in_csv_train, in_csv_test, out_dir):
     df_loss = pd.DataFrame([loss])
 
     #Order the dataframes
-    df_loss.to_csv(out_dir + "baseline_loss.csv")
+    df_loss.to_csv(out_dir + "baseline_loss_tp3.csv")
 
 
 
 if __name__ == "__main__":
     # Just hard code everything
-    out_dir = "/homedtic/gmarti/CODE/RNN-VAE/"
+    out_dir = "/homedtic/gmarti/CODE/RNN-VAE/evaluation/baselines/"
     in_csv_train = "data/multimodal_no_petfluid_train.csv"
     in_csv_test = "data/multimodal_no_petfluid_test.csv"
     main(in_csv_train, in_csv_test, out_dir)

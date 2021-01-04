@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import torch
 from torch import nn
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
-from rnnvae import rnnvae
+from rnnvae import rnnvae_h
 
 # DEVICE
 ## Decidint on device on device.
@@ -25,44 +25,54 @@ DEVICE = torch.device('cuda:' + str(DEVICE_ID) if torch.cuda.is_available() else
 if torch.cuda.is_available():
     torch.cuda.set_device(DEVICE_ID)
 
-
 # data parameters
 ntp = 10
 noise = 0.1
-variable_tp=False
-lat_dim=2
-n_channels=3
-n_feats=20
-n_samples=100
+lat_dim=6
+n_channels=4
+n_feats=10
+n_samples=300
+#curves = [
+#    ("sigmoid", {"L": 1, "k": 1, "x0": 5}),    
+##    ("sin", {"A": 1, "f": 0.2}),
+#    ("cos", {"A": 1, "f": 0.2})
+#    ]
 curves = [
-    ("sigmoid", {"L": 1, "k": 1, "x0": 5}),    
-    ("sin", {"A": 1, "f": 0.2}),
-    ("cos", {"A": 1, "f": 0.2})
+    ("sigmoid", {"L": -1, "k": 3, "x0": 2}),    
+    ("sigmoid", {"L": 1, "k": -1, "x0": 5}),
+    ("sigmoid", {"L": -1, "k": 2, "x0": 7}),
+    ("sin", {"A": 1, "f": 0.2})
     ]
-ch_type = ["long", "long", "long"]
+
+ch_type = ["long", "long", "long","long"]
 # model parameters
 p = {
     "h_size": 20,
-    "z_dim": 5,
-    "hidden": 20,
+    "z_dim": 15,
+    "hidden": 30,
     "n_layers": 1,
-    "n_epochs": 6000,
+    "n_epochs": 2000,
     "clip": 10,
-    "learning_rate": 5e-3,
+    "learning_rate": 1e-2,
     "batch_size": 128,
     "seed": 1714,
     "n_channels": n_channels,
     "ch_type": ch_type,
-    "phi_layers": False,
+    "phi_layers": True,
     "sig_mean": False,
     "dropout": True,
     "drop_th": 0.2,
-    "n_feats": [n_feats for _ in range(n_channels)]
+    "n_feats": [n_feats for _ in range(n_channels)],
+    "curves": curves
 }
 
-out_dir = "/homedtic/gmarti/RNN-VAE/test_synth_mc/"
+out_dir = "/homedtic/gmarti/CODE/RNN-VAE/synth_final_tests/test_synth_mc_dropout6_4ch/"
 if not os.path.exists(out_dir):
     os.makedirs(out_dir)
+
+#save parameters to the out dir 
+with open(out_dir + "params.txt","w") as f:
+    f.write(str(p))
 
 lat_gen = LatentDataGeneratorCurves(curves, ch_type, ntp, noise, lat_dim, n_channels, n_feats)
 Z, X = lat_gen.generate_samples(n_samples)
@@ -89,7 +99,8 @@ mask_train_list = []
 for x_ch in X:
     #originally, x_ch is ntp, nfeat, nsamples
     #  should be size nsamples, ntp, nfeat
-    x_ch = x_ch.swapaxes(0,2).swapaxes(1,2)
+    # import pdb; pdb.set_trace()
+    # x_ch = x_ch.swapaxes(0,2).swapaxes(1,2)
     X_train_tensor = [ torch.FloatTensor(t) for t in x_ch ]
     X_train_pad_i = nn.utils.rnn.pad_sequence(X_train_tensor, batch_first=False, padding_value=np.nan)
     mask_train = ~torch.isnan(X_train_pad_i)
@@ -98,7 +109,7 @@ for x_ch in X:
     X_train_list.append(X_train_pad_i.to(DEVICE))
 
 
-model = rnnvae.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
+model = rnnvae_h.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
                         p["hidden"], p["n_layers"], p["hidden"],
                         p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
                         p["clip"], p["n_epochs"], p["batch_size"], 
@@ -120,13 +131,10 @@ if p["dropout"]:
     print(model.dropout_comp)
 
 # Predict the reconstructions from X_val and X_train
-X_train_fwd = model.predict(X_train_list, nt=ntp)
+X_train_fwd = model.predict(X_train_list, mask_train_list, nt=ntp)
 
 # Unpad using the masks
 #plot validation and tal
 plot_total_loss(model.loss['total'], model.val_loss['total'], "Total loss", out_dir, "total_loss.png")
 plot_total_loss(model.loss['kl'], model.val_loss['kl'], "kl_loss", out_dir, "kl_loss.png")
 plot_total_loss(model.loss['ll'], model.val_loss['ll'], "ll_loss", out_dir, "ll_loss.png") #Negative to see downard curve
-
-
-###Plot the dropout, sorted

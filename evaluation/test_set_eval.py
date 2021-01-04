@@ -9,16 +9,16 @@ import torch
 from torch import nn
 import numpy as np
 from sklearn.metrics import mean_absolute_error
-from rnnvae import rnnvae
+from rnnvae import rnnvae_h
 from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import seaborn as sns
 
-out_dir = "/homedtic/gmarti/CODE/RNN-VAE/experiments_mc_newloss/h_doublefix/"
+out_dir = "/homedtic/gmarti/CODE/RNN-VAE/experiments_mc_models/allch_fulltrain_newparam1500/"
 test_csv = "/homedtic/gmarti/CODE/RNN-VAE/data/multimodal_no_petfluid_test.csv"
-# data_cols = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
-data_cols = ['_mri_vol']
+data_cols = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
+# data_cols = ['_cog']
 
 #load parameters
 p = eval(open(out_dir + "params.txt").read())
@@ -49,13 +49,23 @@ for x_ch in X_test:
 ntp = max([x.shape[0] for x in X_test_list])
 
 print(p)
-model = rnnvae.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
+model = rnnvae_h.MCRNNVAE(p["h_size"], p["x_hidden"], p["x_n_layers"], 
+                        p["z_hidden"], p["z_n_layers"], p["enc_hidden"],
+                        p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
+                        p["clip"], p["n_epochs"], p["batch_size"], 
+                        p["n_channels"], p["ch_type"], p["n_feats"], DEVICE, print_every=100, 
+                        phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
+                        dropout=p["dropout"], dropout_threshold=p["drop_th"])
+
+"""
+model = rnnvae_h.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
                         p["hidden"], p["n_layers"], p["hidden"],
                         p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
                         p["clip"], p["n_epochs"], p["batch_size"], 
                         p["n_channels"], p["ch_type"], p["n_feats"], DEVICE, print_every=100, 
                         phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
                         dropout=p["dropout"], dropout_threshold=p["drop_th"])
+"""
 model = model.to(DEVICE)
 model.load(out_dir+'model.pt')
 
@@ -65,7 +75,7 @@ model.load(out_dir+'model.pt')
 
 
 ##TEST
-X_test_fwd = model.predict(X_test_list, nt=ntp)
+X_test_fwd = model.predict(X_test_list, mask_test_list, nt=ntp)
 
 # Test the reconstruction and prediction
 ######################
@@ -87,7 +97,7 @@ for x_ch in X_test:
 
 # Run prediction
 #this is terribly programmed holy shit
-X_test_fwd_minus = model.predict(X_test_list_minus, nt=ntp)
+X_test_fwd_minus = model.predict(X_test_list_minus, mask_test_list_minus, nt=ntp)
 X_test_xnext = X_test_fwd_minus["xnext"]
 
 
@@ -103,7 +113,9 @@ for (X_ch, ch) in zip(X_test[:3], p["ch_names"][:3]):
     # for each subject, select last tp
     j = 0
     for tp in last_tp:
-        if tp < 1: continue # ignore tps with only baseline
+        if tp < 1: 
+            j += 1
+            continue # ignore tps with only baseline
         y_pred.append(X_test_xnext[i][tp, j, :])
         j += 1
 
@@ -124,7 +136,7 @@ if p["n_channels"] > 1:
         av_ch = list(range(len(X_test)))
         av_ch.remove(i)
         # try to reconstruct it from the other ones
-        ch_recon = model.predict(X_test_list, nt=ntp, av_ch=av_ch)
+        ch_recon = model.predict(X_test_list, mask_test_list, nt=ntp, av_ch=av_ch, task='recon')
         #for all existing timepoints
 
         y_true = X_test[i]
