@@ -1,6 +1,6 @@
 """
-Script with all the new parameters added, used for testing those
-parameters.
+Script with all the new parameters added, used for training over the full
+dataset.
 """
 import sys
 import os

@@ -57,15 +57,6 @@ model = rnnvae_h.MCRNNVAE(p["h_size"], p["x_hidden"], p["x_n_layers"],
                         phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
                         dropout=p["dropout"], dropout_threshold=p["drop_th"])
 
-"""
-model = rnnvae_h.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
-                        p["hidden"], p["n_layers"], p["hidden"],
-                        p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
-                        p["clip"], p["n_epochs"], p["batch_size"], 
-                        p["n_channels"], p["ch_type"], p["n_feats"], DEVICE, print_every=100, 
-                        phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
-                        dropout=p["dropout"], dropout_threshold=p["drop_th"])
-"""
 model = model.to(DEVICE)
 model.load(out_dir+'model.pt')
 

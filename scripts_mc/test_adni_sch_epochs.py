@@ -1,6 +1,8 @@
 """
 Script with all the new parameters added, used for testing those
 parameters.
+
+Useful for testing at each epoch.
 """
 import sys
 import os

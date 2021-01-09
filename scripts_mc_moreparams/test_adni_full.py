@@ -1,6 +1,7 @@
 """
-Script with all the new parameters added, used for testing those
-parameters.
+Script with all the new parameters added, used for testing those parameters.
+
+Using cross-validation
 """
 import sys
 import os

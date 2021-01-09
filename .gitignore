@@ -132,20 +132,7 @@ dmypy.json
 data/
 
 # experiments folder
-experiments/
-experiments_mc/
-experiments/
-experiments_mc/
-experiments_mc_newloss/
-experiments_mc_rnn/
-experiments_mc_cv/
-experiments_mc_h/
-experiments_mc_h2/
-experiments_mc_models/
-synth_final_tests/
-test_synth_mc/
-
-#FIGURES GEN FOLDER, CLEAN UP BEFORE UPLOADING
+.vscode/
 
 #Anything pdf or png should be ignored
 *.png
