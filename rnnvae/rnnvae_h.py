@@ -111,7 +111,7 @@ class PhiBlock(nn.Module):
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.phi_layers.append(nn.Linear(self.input_size, self.hidden_size))
-            # self.phi_layers.append(nn.ReLU())
+            #self.phi_layers.append(nn.ReLU())
             self.input_size = self.hidden_size
 
     def forward(self, x):
@@ -145,7 +145,7 @@ class VariationalBlock(nn.Module):
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.var_layers.append(nn.Linear(self.input_size, self.hidden_size))
-            # self.var_layers.append(nn.ReLU())
+            #self.var_layers.append(nn.ReLU())
             self.input_size = self.hidden_size
 
         #TODO: MU COULD BE USING A SIGMOID FOR THE OUTPUT
@@ -264,12 +264,12 @@ class MCRNNVAE(nn.Module):
 
         # Building blocks
         # Build them for every channel!
-        self.ch_priors = nn.ModuleList() # LIST OF PRIORS
+        self.ch_priors = VariationalBlock(self.h_size, self.enc_hidden, self.latent, self.enc_n)#nn.ModuleList() # LIST OF PRIORS
         self.ch_phi_x = nn.ModuleList() #LIST OF TRANSFORMATION TO INPUT
         self.ch_enc = nn.ModuleList() #LIST OF ENCODERS
-        self.ch_phi_z = nn.ModuleList() #LIST OF TRANSFORMATION TO LATENT
+        self.ch_phi_z = PhiBlock(self.latent, self.phi_z_hidden, 1) # nn.ModuleList() #LIST OF TRANSFORMATION TO LATENT
         self.ch_dec = nn.ModuleList() #LIST OF DECODERS
-        self.ch_RNN = nn.ModuleList() #LIST OF RNN BLOCK
+        self.ch_RNN = nn.RNN(self.phi_x_hidden + self.phi_z_hidden, self.h_size, 1)
 
         # if dropout, intiate the log alpha
         self.log_alpha = None
@@ -294,18 +294,18 @@ class MCRNNVAE(nn.Module):
                 self.dec_input = self.phi_z_hidden + self.h_size
                 self.enc_input = self.phi_x_hidden + self.h_size
             ## PRIOR 
-            self.ch_priors.append(VariationalBlock(self.h_size, self.enc_hidden, self.latent, self.enc_n))
+            # self.ch_priors.append(VariationalBlock(self.h_size, self.enc_hidden, self.latent, self.enc_n))
 
             ### ENCODER
             self.ch_phi_x.append(PhiBlock(self.n_feats[ch], self.phi_x_hidden, 1)) # hardcode 1 layer
             self.ch_enc.append(VariationalBlock(self.enc_input, self.enc_hidden, self.latent, self.enc_n, sigmoid_mean=self.sigmoid_mean, log_alpha=self.log_alpha))
 
             ### DECODER
-            self.ch_phi_z.append(PhiBlock(self.latent, self.phi_z_hidden, 1)) # hardcode 1 layer
+            # self.ch_phi_z.append(PhiBlock(self.latent, self.phi_z_hidden, 1)) # hardcode 1 layer
             self.ch_dec.append(VariationalBlock(self.dec_input, self.dec_hidden, self.n_feats[ch], self.dec_n, sigmoid_mean=self.sigmoid_mean))
 
             ### RNN 
-            self.ch_RNN.append(nn.RNN(self.phi_x_hidden + self.phi_z_hidden, self.h_size, 1))
+            # self.ch_RNN.append()
 
 
         #Init KL and loss
@@ -377,10 +377,13 @@ class MCRNNVAE(nn.Module):
         phi_zx_list = []
         phi_x_list = []
 
+        #ht_prior = torch.stack(ht_list).mean(0)
+        #z_prior = self.ch_priors(ht_prior[-1]) # get the prior from the hidden state
+
         #For each single channel
         for i in range(self.n_channels):
             ht = ht_list[i]
-            z_prior = self.ch_priors[i](ht[-1]) # get the prior from the hidden state
+            z_prior = self.ch_priors(ht[-1]) # get the prior from the hidden state
             if i in av_ch:
                 #If we have available channel, do normal pipeline 
                 xt = xt_list[av_ch.index(i)]
@@ -406,7 +409,7 @@ class MCRNNVAE(nn.Module):
                 z_t = self.dropout_fn(z_t)  
 
             #Apply phi_z
-            if self.phi_layers: phi_zx_t = self.ch_phi_z[i](z_t)
+            if self.phi_layers: phi_zx_t = self.ch_phi_z(z_t)
             else: phi_zx_t = z_t
 
             phi_zx_list.append(phi_zx_t)  # In the sampling moment, it is necessary
@@ -447,7 +450,7 @@ class MCRNNVAE(nn.Module):
                 x = torch.cat([phi_zx_list[i], x_phi],1).unsqueeze(0)
             
             if self.ch_type[i] == 'long':
-                _, hnext = self.ch_RNN[i](x, ht) # Recurrence step
+                _, hnext = self.ch_RNN(x, ht) # Recurrence step
             else:
                 # Just put a dummy information, will not be used
                 hnext = ht
@@ -455,18 +458,22 @@ class MCRNNVAE(nn.Module):
             #Save results
             hnext_list.append(hnext)
 
-
         # Return xt_list, in the not sampling case, this does nothing, in the other case, returns the reconstructed x
         return xhat_list, hnext_list, z_prior_list, zx_t_list, qzx_t_list, pxz_t_list
 
 
-    def predict(self, data, mask, nt, av_ch=None):
+    def predict(self, data, mask, nt, av_ch=None, task='prediction'):
         """
         Predict the reconstruction of some input.
         av_ch is the channels that we will be using for reconstruction. If its None, we just use all of them
         We are predicting the exact reconstuction, and its latent space
 
-        NEED TO UDPATE FOR THE NEW PROCEDURE OF COMPUTING VARIABLE NUMBER OF TPS
+        The variable task can be either "prediction" or "reconstruction".
+        If "prediction", that means that we are predicting future timepoints
+        for available data: this means that each extra timepoint we need to predict will come
+        only from the previous pxz of the same channel.
+        If it is reconstruction, then we will reconstruct from the channels indicated by
+        av_ch.
         """
         self.eval()
         av_ch = range(self.n_channels) if av_ch is None else av_ch
@@ -500,7 +507,7 @@ class MCRNNVAE(nn.Module):
 
                     # If we have x information, we do a normal step
                     xhat, hnext, zp_t, z_t, qzx_t, pxz_t = self.step_predict(x_t, ht, curr_channels)
-
+                    # zp.append(zp_t)
                     for i in range(self.n_channels):
                         #this xnext needs to be averaged across all the values, as it is reocnstructed from all channels
                         z[i].append(z_t[i])
@@ -510,17 +517,23 @@ class MCRNNVAE(nn.Module):
                     ht = hnext
 
                 # For xnext, we need to obtain the average of the reconstruction across channels and timepoints
-                # THIS IS THE PART where we need to take into account the mask. We cannot reconstruct from missing channels,
-                # as that value is WRONG and we are doing the reconstruction wrong. THIS NEEDS TO BE TAKEN INTO ACCOUNT
-                #Right now im not using any mask and basically use everything.
-                #However, this is an open problem and I probably should ask Marco about this. Which channels should I use for reconstruction'
-                #for example, for a time point where we have no available data, what do we do?
                 
                 X_hat = [[] for _ in range(self.n_channels)]
                 for i in range(self.n_channels):
                     for tp in range(nt):
+                        if task=='prediction':
+                            xhat = pxz[i][tp][i].loc.cpu().detach()
+                        elif task=='recon':
+                            #select only longitudinal for tp > 0?
+                            if tp > 0:
+                                xhat = torch.stack([pxz[ch][tp][i].loc.cpu().detach() for ch in av_ch if self.ch_type[ch] == 'long']).mean(0)
+                            else:
+                                xhat = torch.stack([pxz[ch][tp][i].loc.cpu().detach() for ch in av_ch]).mean(0)
+                        else:
+                            print('wrong!')
+                            xhat = [None]
                         # curr_channels = [i for i, x_ch in enumerate(data) if tp < x_ch.shape[0]]
-                        xhat = torch.stack([pxz[ch][tp][i].loc.cpu().detach() for ch in av_ch]).mean(0)
+                        # 
                         X_hat[i].append(xhat.numpy())
                     X_hat[i] = np.asarray(X_hat[i]) #Convert to np array
 
@@ -540,7 +553,6 @@ class MCRNNVAE(nn.Module):
 
 
         # The channels that are not available
-
     def step(self, xt_list, ht_list, curr_channels, av_ch=None):
         """
         Function that implements the forward pass 
@@ -557,7 +569,6 @@ class MCRNNVAE(nn.Module):
         zx_t_list = []
         qzx_t_list = []
         pxz_t_list = []
-
         phi_zx_list = []
 
         # First part: get all the decoders
@@ -565,7 +576,7 @@ class MCRNNVAE(nn.Module):
         for i in range(len(curr_channels)):
             ch = curr_channels[i]
             ht = ht_list[i]
-            z_prior = self.ch_priors[ch](ht[-1]) # get the prior from the hidden state
+            z_prior = self.ch_priors(ht[-1]) # get the prior from the hidden state
             
             #If we are not sampling from the prior, we have an input value
             xt = xt_list[i]
@@ -585,7 +596,7 @@ class MCRNNVAE(nn.Module):
                 z_t = self.dropout_fn(z_t)
 
             #Apply phi_z
-            if self.phi_layers: phi_zx_t = self.ch_phi_z[ch](z_t)
+            if self.phi_layers: phi_zx_t = self.ch_phi_z(z_t)
             else: phi_zx_t = z_t
             phi_zx_list.append(phi_zx_t)  # In the sampling moment, it is necessary
 
@@ -600,7 +611,6 @@ class MCRNNVAE(nn.Module):
                     # z = phi_zx_t
                 else:
                     z = phi_zx_t
-
                 pxz_t = self.ch_dec[j](z)  # Decode from each different channel
                 pxz_t_list[i].append(pxz_t)
 
@@ -610,7 +620,7 @@ class MCRNNVAE(nn.Module):
 
             if self.ch_type[ch] == 'long':
                 x = torch.cat([phi_zx_t, x_phi],1).unsqueeze(0)
-                _, hnext = self.ch_RNN[ch](x, ht) # Recurrence step
+                _, hnext = self.ch_RNN(x, ht) # Recurrence step
             else:
                 # Just put a dummy information, will not be used
                 hnext = ht
@@ -640,6 +650,7 @@ class MCRNNVAE(nn.Module):
         zx = [[] for _ in range(self.n_channels)]
         pxz = [[] for _ in range(self.n_channels)]
         zp = [[] for _ in range(self.n_channels)]
+
         # ITERATE OVER THE SEQUENCE, at each time point
         #MISTAKE: HERE WE ALWAYS ITERATE, AT MAX, FROM THE NTP FROM CHANNEL 0. SHOULD BE FROM THE MAX
         # OR AT LEAST FORCE ALL TPS TO HAVE THE SAME SIZE
@@ -653,10 +664,12 @@ class MCRNNVAE(nn.Module):
             h_t = [hti for i, hti in enumerate(ht) if i in curr_channels]
             tp += 1
             #Only run those channels
+            if len(curr_channels) == 0: break
             hnext, zp_t, zx_t, qzx_t, pxz_t = self.step(x_t, h_t, curr_channels)
             #Recover the initial shape. Append each channel where it corresponds
             # this is for eacah channel
             #but wait, are we appending it where it corresponds??
+            # zp.append(zp_t)
             for i in range(len(x_t)):
                 ch = curr_channels[i]
                 zx[ch].append(zx_t[i])
@@ -921,7 +934,7 @@ class MCRNNVAE(nn.Module):
 
         total = kl - ll
 
-        losses = {      
+        losses = {
             'total': total,
             'kl': kl,
             'll': ll

@@ -2,7 +2,7 @@
 #SBATCH -J rnnvae
 #SBATCH -p high
 #SBATCH --workdir=/homedtic/gmarti/CODE/RNN-VAE
-#SBATCH --mem 16G
+#SBATCH --mem 32G
 #SBATCH --gres=gpu:1
 #SBATCH -o LOGS/vae1_%J.out # STDOUT
 #SBATCH -e LOGS/vae1_%j.err # STDERR
@@ -17,4 +17,5 @@ module --ignore-cache load CUDA/10.2.89
 module --ignore-cache load cuDNN/7.6.5.32-CUDA-10.2.89
 source /homedtic/gmarti/pytorch/bin/activate 
 
-python scripts_mc/metaexp_synth_pad.py
+# python scripts_mc/metaexp_adni.py
+python scripts_mc/metaexp_adni_small.py

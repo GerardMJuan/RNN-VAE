@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import itertools
+from matplotlib.patches import Ellipse
 
 def plot_losses(loss_curve, out_dir, out_name):
     # Plot the loss curve
@@ -187,3 +189,209 @@ def plot_z_time_2d(z, max_timepoints, dims, out_dir, c='tp', Y=None, out_name='l
     plt.title(f"Latent space all timepoints, colored by {c}", size=15)
     plt.savefig(f'{out_dir}/{out_name}.png')
     plt.close()
+
+def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None, plt_tp='all', text=None, all_plots=False, uncertainty=True, comp=None, savefig=False, out_dir=None, mask=None):
+    """
+    Copied from MCVAE.
+
+    qzx is already processed data from the decoder.
+    qzx should be of the form [nch, ntp] and converted to cpu
+    Plot the latent space on the data.
+    Adapted for temporal data.
+    This adaptation means that we add a new parameter named time,
+    Which takes into account which timepoint to plot (can be 'all')
+    # If we want to classify by time, use the classificator
+    parameter with the timepoint info OUTSIDE the tal.
+
+    #Classificator should correspond to the length of the data and tp indicated.
+
+    The mask indicates the subjects that are present for that timepoint and channel, and as such, the ones that should be plotted.
+    """
+    sns.reset_defaults()    
+    channels = len(qzx)
+    comps = model.latent
+    
+    if classificator is not None:
+        groups = np.unique([item for elem in classificator for item in elem])
+
+    # One figure per latent component
+    #  Linear relationships expected between channels
+    if comp is not None:
+        itercomps = comp if isinstance(comp, list) else [comp]
+    else:
+        itercomps = range(comps)
+    # For each component
+    for comp in itercomps:
+        if channels == 1: continue
+        fig, axs = plt.subplots(channels, channels, figsize=(25,25))
+        fig.suptitle(r'$z_{' + str(comp) + '}$', fontsize=30)
+        for i, j in itertools.product(range(channels), range(channels)):
+            ax = axs if channels == 1 else axs[j, i]
+            if i == j:
+                ax.text(
+                    0.5, 0.5, 'z|{}'.format(model.ch_name[i]),
+                    horizontalalignment='center', verticalalignment='center',
+                    fontsize=20
+                )
+                ax.axis('off')
+            elif i > j:
+                xi, xj, si, sj = (np.array([]) for _ in range(4))
+                if mask is not None and classificator is not None: classificator_masked = np.array([])
+    
+                # select only the timepoints needed
+                # We assume that all subjects have the same number of timepoints
+                for tp in range(max_tp):
+                    #If not current tp
+                    if plt_tp != "all" and tp not in plt_tp:
+                        continue
+                    #  if qzx for i or for j is none, also continue
+                    if not qzx[i][tp] or not qzx[j][tp]:
+                        continue
+                    # import pdb; pdb.set_trace()
+                    xii = qzx[i][tp].loc.cpu().detach().numpy()[:, comp]
+                    xjj = qzx[j][tp].loc.cpu().detach().numpy()[:, comp]
+                    sii = qzx[i][tp].scale.cpu().detach().numpy()[:, comp]
+                    sjj = qzx[j][tp].scale.cpu().detach().numpy()[:, comp]
+                    #If we have mask, remove the points that, for that two channels, apply
+                    if mask is not None:
+                        #Convert to cpu bc we are still using tensors, very dirty but thats life
+                        mask_ij = np.logical_and(mask[i][tp, :, 0].cpu().numpy(), mask[j][tp, :, 0].cpu().numpy())
+                        xii = xii[mask_ij]
+                        xjj = xjj[mask_ij]
+                        sii = sii[mask_ij]
+                        sjj = sjj[mask_ij]
+
+                        # We also need to select the appropiate labels
+                        if classificator is not None:
+                            # select the color from the timepoints and the subjects specified
+                            # there will be no problem with tp > len(color) as we have already selected
+                            # subjects with that tp with mask_ij
+                            clf_mask = []
+                            clf_mask = [color[tp] for idx, color in enumerate(classificator) if mask_ij[idx]]
+                            classificator_masked = np.append(classificator_masked, np.array(clf_mask))
+
+                    #Go subject by subject and append the information
+                    xi = np.append(xi, xii)
+                    xj = np.append(xj, xjj)
+                    si = np.append(si, sii)
+                    sj = np.append(sj, sjj)
+                
+                ells = [Ellipse(xy=[xi[p], xj[p]], width=2 * si[p], height=2 * sj[p]) for p in range(len(xi))]
+                if classificator is not None:
+                    #For this to work, length of classificator must be equal to length of the timepoints and subjects
+                    for g in groups:
+                        #hack for the ntp case
+                        if g not in pallete_dict.keys():
+                            continue
+                        if mask is not None:
+                            g_idx = classificator_masked == g
+                        else:
+                            g_idx = classificator == g
+                        ax.plot(xi[g_idx], xj[g_idx], '.', color=pallete_dict[g], alpha=0.95, markersize=12, markeredgecolor='k', markeredgewidth=0.5)
+                        if uncertainty:
+                            color = ax.get_lines()[-1].get_color()
+                            for idx in np.where(g_idx)[0]:
+                                ax.add_artist(ells[idx])
+                                ells[idx].set_alpha(0.1)
+                                ells[idx].set_facecolor(color)
+                else:
+                    ax.plot(xi, xj, '.')
+                    if uncertainty:
+                        for e in ells:
+                            ax.add_artist(e)
+                            e.set_alpha(0.1)
+                if text is not None:
+                    [ax.text(*item) for item in zip(xi, xj, text)]
+                # Bisettrice
+                lox, hix = ax.get_xlim()
+                loy, hiy = ax.get_ylim()
+                lo, hi = np.min([lox, loy]), np.max([hix, hiy])
+                ax.plot([lo, hi], [lo, hi], ls="--", c=".3")
+            else:
+                ax.axis('off')
+        if classificator is not None:
+            # groups = sorted(groups, key=lambda t: int(t))
+            [axs[-1, 0].plot(0,0, color=pallete_dict[g]) for g in groups if g in pallete_dict.keys()]
+            # legend = ['{} (n={})'.format(g, len(classificator[classificator==g])) for g in groups]
+            legend = ['{}'.format(g) for g in groups]
+            axs[-1,0].legend(legend)
+            try:
+                axs[-1, 0].set_title(classificator.name)
+            except AttributeError:
+                axs[-1, 0].set_title('Groups')
+
+        #save figure
+        if savefig:
+            plt.savefig(f"{out_dir}latent_space_zcomp_{comp}.png")
+            plt.close()
+
+    if all_plots:  # comps > 1:
+        # TODO: remove based on components
+        # One figure per channel
+        #  Uncorrelated relationsips expected between latent components
+        for ch in range(channels):
+            fig, axs = plt.subplots(comps, comps, figsize=(20,20))
+            fig.suptitle(model.ch_name[ch], fontsize=30)
+            for i, j in itertools.product(range(comps), range(comps)):
+                if i == j:
+                    axs[j, i].text(
+                        0.5, 0.5, r'$z_{' + str(i) + '}$',
+                        horizontalalignment='center', verticalalignment='center',
+                        fontsize=20
+                    )
+                    axs[j, i].axis('off')
+                elif i > j:
+                    xi, xj = (np.array([]) for i in range(2))
+                    if mask is not None and classificator is not None: classificator_masked = np.array([])
+                    for tp in range(max_tp):
+                        if plt_tp != "all" and tp not in plt_tp:
+                            continue
+                        if not qzx[ch][tp]:
+                            continue
+                        xii = qzx[ch][tp].loc.cpu().detach().numpy()[:, i]
+                        xjj = qzx[ch][tp].loc.cpu().detach().numpy()[:, j]
+
+                        if mask is not None:
+                            #Convert to cpu bc we are still using tensors, very dirty but thats life
+                            mask_ij = np.logical_and(mask[ch][tp, :, 0].cpu().numpy(), mask[ch][tp, :, 0].cpu().numpy())
+                            xii = xii[mask_ij]
+                            xjj = xjj[mask_ij]
+
+                            # We also need to select the appropiate labels
+                            if classificator is not None:
+                                # select the color from the timepoints and the subjects specified
+                                # there will be no problem with tp > len(color) as we have already selected
+                                # subjects with that tp with mask_ij
+                                clf_mask = [label[tp] for idx, label in enumerate(classificator) if mask_ij[idx]]
+                                classificator_masked = np.append(classificator_masked, np.array(clf_mask))
+
+                        xi = np.append(xi, xii)
+                        xj = np.append(xj, xjj)
+                    if classificator is not None:
+                        for g in groups:
+                            #hack for the ntp case
+                            if g not in pallete_dict.keys():
+                                continue
+                            if mask is not None:
+                                g_idx = classificator_masked == g
+                            else:
+                                g_idx = classificator == g
+                            axs[j, i].plot(xi[g_idx], xj[g_idx], '.', color=pallete_dict[g], alpha=0.95, markersize=15, markeredgecolor='k', markeredgewidth=0.5)
+                    else:
+                        axs[j, i].plot(xi, xj, '.')
+                        
+                    # zero axis
+                    axs[j, i].axhline(y=0, ls="--", c=".3")
+                    axs[j, i].axvline(x=0, ls="--", c=".3")
+                else:
+                    axs[j, i].axis('off')
+            if classificator is not None:
+                # groups = sorted(groups, key=lambda t: int(t))
+                [axs[-1, 0].plot(0,0, color=pallete_dict[g]) for g in groups if g in pallete_dict.keys()]
+                legend = ['{}'.format(g) for g in groups]
+                axs[-1,0].legend(legend)
+
+            #save figure
+            if savefig:
+                plt.savefig(f"{out_dir}latent_space_ch_{model.ch_name[ch]}.png")
+                plt.close()

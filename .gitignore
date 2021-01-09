@@ -129,14 +129,21 @@ dmypy.json
 .pyre/
 
 # data folder
-data/*
+data/
 
 # experiments folder
-experiments/
-experiments_mc/
+.vscode/
+
+#Anything pdf or png should be ignored
+*.png
+*.pdf
+*.csv
 
 #LOGS folder
 LOGS/
 
+#hpc folder
+hpc/
+
+#script for the environment
 env.sh
-*.csv
