@@ -132,8 +132,8 @@ dmypy.json
 data/
 
 # experiments folder
-experiments/*
-experiments_mc/*
+experiments/
+experiments_mc/
 experiments/
 experiments_mc/
 experiments_mc_newloss/
@@ -146,8 +146,11 @@ synth_final_tests/
 test_synth_mc/
 
 #FIGURES GEN FOLDER, CLEAN UP BEFORE UPLOADING
-fig_gen/
-evaluation/baselines/
+
+#Anything pdf or png should be ignored
+*.png
+*.pdf
+*.csv
 
 #LOGS folder
 LOGS/
@@ -155,8 +158,5 @@ LOGS/
 #hpc folder
 hpc/
 
+#script for the environment
 env.sh
-
-#results file
-baseline_loss.csv
-evaluation/baselines/baseline_loss.csv
