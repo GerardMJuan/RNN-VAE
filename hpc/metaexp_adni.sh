@@ -18,4 +18,4 @@ module --ignore-cache load cuDNN/7.6.5.32-CUDA-10.2.89
 source /homedtic/gmarti/pytorch/bin/activate 
 
 # python scripts_mc/metaexp_adni.py
-python scripts_mc/metaexp_adni_small.py
+python scripts_mc_moreparams/metaexp_adni_full.py

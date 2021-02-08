@@ -15,29 +15,35 @@ channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
 names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
 ch_type = ["long", "long", "long", "bl", 'bl']
 
+constrain1=[None, None, 5, 5, 5]
+constrain2=[None, None, 2, 2, 2]
+constrain3=[None, None, 10, 10, 10]
+
 params = {
     "h_size": [100,200,300],
     "z_dim": [15,20,30],
-    "x_hidden": [10,200,300],
+    "x_hidden": [300],
     "x_n_layers": [1],
-    "z_hidden": [20,50,100],
+    "z_hidden": [20],
     "z_n_layers": [1],
     "enc_hidden": [120],
     "enc_n_layers": [0],
     "dec_hidden": [120],
     "dec_n_layers": [0],
-    "n_epochs": [1000],
+    "n_epochs": [3000],
     "clip": [10],
     "learning_rate": [1e-3],
     "batch_size": [128],
     "seed": [1714],
+    "c_z": [constrain1, constrain2, constrain3],
     "n_channels": [len(channels)],
     "ch_names" : [names],
     "ch_type": [ch_type],
     "phi_layers": [True],
     "sig_mean": [False],
-    "dropout": [False],
-    "drop_th": [0.3]
+    "dropout": [True],
+    "drop_th": [0.2],
+    "long_to_bl": [True]
 }
 
 csv_path = "data/multimodal_no_petfluid_train.csv"
@@ -45,7 +51,7 @@ csv_path = "data/multimodal_no_petfluid_train.csv"
 #Create two lists, that will store the dictionaries of the loss that later will become a dataframe
 list_loss = []
 
-base_out_dir = "experiments_mc_cv/results_cv_full_moreparams/"
+base_out_dir = "/homedtic/gmarti/EXPERIMENTS/RNN-VAE/experiments_postthesis/contrained_z_long/"
 
 if not os.path.exists(base_out_dir):
     os.makedirs(base_out_dir)
@@ -62,14 +68,17 @@ for p in ParameterGrid(params):
     x_nlayers = p["x_n_layers"]
     z_nlayers = p["x_n_layers"]
     learning_rate = p["learning_rate"]
-    nepochs = p["n_epochs"]
+    c_z = p["c_z"]
 
-    out_dir = f"{base_out_dir}_h_{h_size}_z_{z_dim}_hid_{z_hidden}_nl_{z_nlayers}_x_hid_{x_hidden}_nl_{x_nlayers}" +\
-              f"_epochs_{nepochs}_lr_{learning_rate}/"
+    out_dir = f"{base_out_dir}_h_{h_size}_z_{z_dim}_cz_{c_z[3]}/"
 
     t = time.time()
-    results = pd.read_csv(out_dir + "cv_results.csv", index_col=False)
-    loss = results.to_dict(orient='list')
+    loss = run_experiment(p, csv_path, out_dir, channels)
+    df_loss = pd.DataFrame([loss])
+    df_loss.to_csv(out_dir + "cv_results.csv")    
+    elapsed = time.time() - t
+    # Merge dictionaries with params, so that runs can be identified
+    # only relevant params
     rel_p = {
         "h_size": h_size,
         "z_dim": z_dim,
@@ -78,33 +87,12 @@ for p in ParameterGrid(params):
         "x_nlayers": x_nlayers,
         "z_nlayers": z_nlayers,
         "learning_rate": learning_rate,
-        "nepochs": nepochs}
+        "constraint_z": c_z[3]}
     loss = {**loss, **rel_p}
-    list_loss.append(loss)
-    """
-    try:
-        loss = run_experiment(p, csv_path, out_dir, channels)
-        df_loss = pd.DataFrame([loss])
-        df_loss.to_csv(out_dir + "cv_results.csv")    
-        elapsed = time.time() - t
-        # Merge dictionaries with params, so that runs can be identified
-        # only relevant params
-        rel_p = {
-            "h_size": h_size,
-            "z_dim": z_dim,
-            "x_hidden": x_hidden,
-            "z_hidden": z_hidden,
-            "x_nlayers": x_nlayers,
-            "z_nlayers": z_nlayers,
-            "learning_rate": learning_rate,
-            "nepochs": nepochs}
-        loss = {**loss, **rel_p}
 
-        # Append to corresponding list
-        list_loss.append(loss)
-    except:
-        print('it failed, continue')
-    """ 
+    # Append to corresponding list
+    list_loss.append(loss)
+
 
 #Convert lists to dataframes
 df_loss = pd.DataFrame(list_loss)

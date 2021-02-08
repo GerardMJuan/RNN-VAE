@@ -55,9 +55,20 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     X_train_list = []
     mask_train_list = []
 
-
     print('Length of train/test')
     print(len(X_train[0]))
+
+    # need to deal with ntp here
+    ntp = max(np.max([[len(xi) for xi in x] for x in X_train]), np.max([[len(xi) for xi in x] for x in X_train]))
+
+    if p["long_to_bl"]:
+        # HERE, change bl to long and repeat the values at t0 for ntp
+        for i in range(len(p["ch_type"])):
+            if p["ch_type"][i] == 'bl':
+                for j in range(len(X_train[i])):
+                    X_train[i][j] = np.array([X_train[i][j][0]]*ntp) 
+
+                p["ch_type"][i] = 'long'
 
     #For each channel, pad, create the mask, and append
     for x_ch in X_train:
@@ -74,7 +85,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
                             p["z_hidden"], p["z_n_layers"], p["enc_hidden"],
                             p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
                             p["clip"], p["n_epochs"], p["batch_size"], 
-                            p["n_channels"], p["ch_type"], p["n_feats"], DEVICE, print_every=100, 
+                            p["n_channels"], p["ch_type"], p["n_feats"], p["c_z"], DEVICE, print_every=100, 
                             phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
                             dropout=p["dropout"], dropout_threshold=p["drop_th"])
 
@@ -134,9 +145,11 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
 if __name__ == "__main__":
 
+
     channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
     names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
     ch_type = ["long", "long", "long", "bl", 'bl']
+    constrain = [None, None, 5, 5, 5]
 
     params = {
         "h_size": 300,
@@ -149,7 +162,7 @@ if __name__ == "__main__":
         "enc_n_layers": 0,
         "dec_hidden": 120,
         "dec_n_layers": 0,
-        "n_epochs": 1500,
+        "n_epochs": 2000,
         "clip": 10,
         "learning_rate": 1e-3,
         "batch_size": 128,
@@ -157,12 +170,14 @@ if __name__ == "__main__":
         "n_channels": len(channels),
         "ch_names" : names,
         "ch_type": ch_type,
+        "c_z": constrain,
         "phi_layers": True,
         "sig_mean": False,
-        "dropout": False,
-        "drop_th": 0.3
+        "dropout": True,
+        "drop_th": 0.4,
+        "long_to_bl": True
     }
 
-    out_dir = "experiments_mc_models/allch_fulltrain_newparam1500/"
+    out_dir = "/homedtic/gmarti/EXPERIMENTS/RNN-VAE/experiments_postthesis/constrained_trained_long/"
     csv_path = "data/multimodal_no_petfluid_train.csv"
     loss = run_experiment(params, csv_path, out_dir, channels)

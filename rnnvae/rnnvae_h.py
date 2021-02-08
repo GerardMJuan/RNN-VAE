@@ -128,7 +128,7 @@ class VariationalBlock(nn.Module):
     receiving an input and the forward pass generating a Normal distribution.
     """
 
-    def __init__(self, input_size, hidden_size, latent_size, n_layers, sigmoid_mean=False, log_alpha=None):
+    def __init__(self, input_size, hidden_size, latent_size, n_layers, sigmoid_mean=False, log_alpha=None, c_z=None):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -136,12 +136,17 @@ class VariationalBlock(nn.Module):
         self.n_layers = n_layers
         self.sigmoid_mean = sigmoid_mean
         self.log_alpha = log_alpha
+        self.c_z = c_z
+        if self.c_z is None:
+            self.c_z = input_size 
         #Define module list
         self.init_block()
 
 
     def init_block(self):
         self.var_layers = nn.ModuleList()
+        if self.c_z < self.input_size:
+            self.input_size = self.c_z
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.var_layers.append(nn.Linear(self.input_size, self.hidden_size))
@@ -164,6 +169,8 @@ class VariationalBlock(nn.Module):
 
 
     def forward(self, x):
+        x = x[:,:self.c_z] #Select only the first x dimensions
+
         for i in range(len(self.var_layers)):
             x = self.var_layers[i](x)
         mu = self.to_mu(x)
@@ -211,6 +218,7 @@ class MCRNNVAE(nn.Module):
     :param ch_type: list with either "long" or "bL", depending on data being
     : cross sectional or not
     :param n_feats: number of features of each channel (tuple)
+    :param c_z: list with ints, for each channel, indicating the number of dimensions in z to use (must be less than latent) 
     :param device: device where to run the computations
     :param model_name_dict: name of the different channels
     :print_every: verbose
@@ -223,7 +231,7 @@ class MCRNNVAE(nn.Module):
     def __init__(self, h_size, phi_x_hidden, phi_x_n, 
                  phi_z_hidden, phi_z_n, enc_hidden, enc_n, latent, dec_hidden, 
                  dec_n, clip, nepochs, batch_size, n_channels, ch_type,
-                 n_feats, device,
+                 n_feats, c_z, device,
                  model_name_dict=None, print_every=100, phi_layers=True, 
                  sigmoid_mean=False, dropout=False, dropout_threshold=0.2):
 
@@ -249,7 +257,8 @@ class MCRNNVAE(nn.Module):
         self.dec_n = enc_n
         self.dropout = dropout
         self.dropout_threshold = dropout_threshold #dropout threshold
-
+        self.c_z = c_z
+        
         # other parameters
         self.clip = clip
         self.print_every = print_every
@@ -262,12 +271,21 @@ class MCRNNVAE(nn.Module):
         # init the names (copied from Luigis' code)
         self.init_names()
 
+        #OVERWITING H SIZE
+
+        if not self.phi_layers:
+            self.phi_x_hidden = self.n_feats[ch] 
+        
+        #HARDCODED BECAUSE NO Z
+        self.phi_z_hidden = self.latent
+
         # Building blocks
         # Build them for every channel!
         self.ch_priors = VariationalBlock(self.h_size, self.enc_hidden, self.latent, self.enc_n)#nn.ModuleList() # LIST OF PRIORS
         self.ch_phi_x = nn.ModuleList() #LIST OF TRANSFORMATION TO INPUT
         self.ch_enc = nn.ModuleList() #LIST OF ENCODERS
-        self.ch_phi_z = PhiBlock(self.latent, self.phi_z_hidden, 1) # nn.ModuleList() #LIST OF TRANSFORMATION TO LATENT
+        self.ch_phi_z = nn.Identity()
+        # self.ch_phi_z = PhiBlock(self.latent, self.phi_z_hidden, 1) # nn.ModuleList() #LIST OF TRANSFORMATION TO LATENT
         self.ch_dec = nn.ModuleList() #LIST OF DECODERS
         self.ch_RNN = nn.RNN(self.phi_x_hidden + self.phi_z_hidden, self.h_size, 1)
 
@@ -277,12 +295,6 @@ class MCRNNVAE(nn.Module):
             self.log_alpha = torch.nn.Parameter(torch.FloatTensor(1, self.latent).normal_(0, 0.01))
 
         for ch in range(self.n_channels): 
-
-            #OVERWITING H SIZE
-
-            if not self.phi_layers:
-                self.phi_x_hidden = self.n_feats[ch] 
-                self.phi_z_hidden = self.latent
                 
             #########################################
             # Define the layers for each channel. For channels that are baseline, the channels involving H should change the inpu size and 
@@ -302,7 +314,7 @@ class MCRNNVAE(nn.Module):
 
             ### DECODER
             # self.ch_phi_z.append(PhiBlock(self.latent, self.phi_z_hidden, 1)) # hardcode 1 layer
-            self.ch_dec.append(VariationalBlock(self.dec_input, self.dec_hidden, self.n_feats[ch], self.dec_n, sigmoid_mean=self.sigmoid_mean))
+            self.ch_dec.append(VariationalBlock(self.dec_input, self.dec_hidden, self.n_feats[ch], self.dec_n, sigmoid_mean=self.sigmoid_mean, c_z=self.c_z[ch]))
 
             ### RNN 
             # self.ch_RNN.append()
@@ -837,11 +849,14 @@ class MCRNNVAE(nn.Module):
                 # TEST it directly
                 if t == 0 and self.dropout:
                     kl_base = KL_log_uniform(qzx[ch][t]).sum(1)
+                #elif t == 0:
+                #    kl_base = self.KL_fn(qzx[ch][t], Normal(0, 1)).sum(1)
                 else:
                     kl_base = self.KL_fn(qzx[ch][t], zp[ch][t]).sum(1)
                 # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
                 if not torch.sum(mask_i[i]) == 0:
                     kl_base = kl_base * ntp_subj_list[ch] # apply the cross-subject mean
+                    # TODO: POSSIBLE PROBLEMA AQUI QUE ES PERDI LA ESTRUCTURA?
                     kl_masked = torch.masked_select(kl_base, mask_i[i]) # apply the timepoint mask
                     kl += kl_masked.mean(0)
 
@@ -876,11 +891,6 @@ class MCRNNVAE(nn.Module):
         else:
             return losses
 
-
-
-
-
-
     def loss_function_old(self, fwd_return, mask=None):
         """
         Full loss function, as described in the paper.
@@ -912,6 +922,8 @@ class MCRNNVAE(nn.Module):
                 # TEST it directly
                 if t == 0 and self.dropout:
                     kl_base = KL_log_uniform(qzx[ch][t]).sum(1)
+                elif t == 0:
+                    kl_base = self.KL_fn(qzx[ch][t], Normal(0,1)).sum(1)
                 else:
                     kl_base = self.KL_fn(qzx[ch][t], zp[ch][t]).sum(1)
                 # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
@@ -957,7 +969,7 @@ class MCRNNVAE(nn.Module):
     @property
     def kept_components(self):
         #Get the ocmponents that were kept more.
-        keep = (self.dropout.reshape(-1) < self.dropout_threshold).tolist()
+        keep = (self.dropout_comp.reshape(-1) < self.dropout_threshold).tolist()
         components = [i for i, kept in enumerate(keep) if kept]
         return components
 
@@ -1011,8 +1023,6 @@ class MCRNNVAE(nn.Module):
         }
 
         return losses
-
-
 
     def init_loss(self):
         self.loss = {

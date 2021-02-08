@@ -13,9 +13,7 @@ def pandas_to_data_timeseries_var(df, suffix, feat, normalize=True, id_col = 'PT
     Quick function that converts a pandas dataframe with the features
     indicated by a vector "feat" (with the name of the features columns) and "id_col"
     indicating the column of the subject ids, and column time to order them by time.
-
     The number of rows is variable, so we are creating a list of numpy arrays
-
     This is generalizable for all type sof features
     """
     #Nuumber of samples
@@ -39,9 +37,6 @@ def pandas_to_data_timeseries_var(df, suffix, feat, normalize=True, id_col = 'PT
 
     for ptid in sample_list:
         i_list = df.index[df['PTID'] == ptid]
-        # OPCIONAL, PER PROVAR LO DE PREDICCIÓ
-        if len(i_list) < 2:
-            continue
         feats = df_feats.iloc[i_list].values
         X.append(feats)
     # Return numpy dataframe
@@ -51,12 +46,10 @@ def load_multimodal_data_cv(csv_path, suffixes_list, type_modal, nsplit=10, norm
     """
     This function returns several types of data from a csv dataset in different channels.
     Returns the data in the appropiate format, a list of different channels.
-
     if train_set=1.0, there is no divide between train and test
     channels is a list containing the suffixes of the columns of the original csv for that specific channel
     type_modal is a list with either "bl" or "long", depending on the type of data
     The data needs to already be preprocessed.
-
     """
     data_df = pd.read_csv(csv_path)
 

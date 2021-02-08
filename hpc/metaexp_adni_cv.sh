@@ -19,4 +19,4 @@ source /homedtic/gmarti/pytorch/bin/activate
 
 # python scripts_mc/metaexp_adni.py
 # python scripts_mc/metaexp_adni_cv.py
-python scripts_mc_moreparams/metaexp_adni_full.py
+python scripts_mc_moreparams/train_adni_full.py

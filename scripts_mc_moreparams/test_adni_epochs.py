@@ -12,6 +12,7 @@ from sklearn.metrics import mean_absolute_error
 from rnnvae import rnnvae_h
 from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
+from rnnvae.eval import eval_reconstruction, eval_prediction
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import seaborn as sns
 
@@ -148,50 +149,16 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         ## Prediction of last time point
         ######################
 
-        # FUTURE TWO TP
-        X_test_list_minus = []
-        X_test_tensors = []
-        mask_test_list_minus = []
-        for x_ch in X_test:
-            X_test_tensor = [ torch.FloatTensor(t[:-1,:]) for t in x_ch]
-            X_test_tensor_full = [ torch.FloatTensor(t) for t in x_ch]
-            X_test_tensors.append(X_test_tensor_full)
-            X_test_pad = nn.utils.rnn.pad_sequence(X_test_tensor, batch_first=False, padding_value=np.nan)
-            mask_test = ~torch.isnan(X_test_pad)
-            mask_test_list_minus.append(mask_test.to(DEVICE))
-            X_test_pad[torch.isnan(X_test_pad)] = 0
-            X_test_list_minus.append(X_test_pad.to(DEVICE))
-
-        # Run prediction
-        #this is terribly programmed holy shit
-        X_test_fwd_minus = model.predict(X_test_list_minus, mask_test_list_minus, nt=ntp)
-        X_test_xnext = X_test_fwd_minus["xnext"]
-
+        i = 0
         # Test data without last timepoint
         # X_test_tensors do have the last timepoint
-        i = 0
-        # import pdb; pdb.set_trace()
-        for (X_ch, ch) in zip(X_test[:3], p["ch_names"][:3]):
-            #Select a single channel
-            print(f'testing for {ch}')
-            y_true = [x[-1] for x in X_ch if len(x) > 1]
-            last_tp = [len(x)-1 for x in X_ch] # last tp is max size of original data minus one
-            y_pred = []
-            # for each subject, select last tp
-            j = 0
-            for tp in last_tp:
-                if tp < 1: 
-                    j += 1
-                    continue # ignore tps with only baseline
-                    
-                y_pred.append(X_test_xnext[i][tp, j, :])
-                j += 1
+        pred_ch = list(range(3))
+        print(pred_ch)
+        t_pred = 1
+        res = eval_prediction(model, X_test, t_pred, pred_ch, DEVICE)
 
-            #Process it to predict it
-            mae_tp_ch = mean_absolute_error(y_true, y_pred)
-            #save the result
-            results[f'pred_{ch}_mae'] = mae_tp_ch
-            i += 1
+        for (i,ch) in enumerate([x for (i,x) in enumerate(p["ch_names"]) if i in pred_ch]):
+            loss[f'pred_{ch}_mae'].append(res[i])
 
         ############################
         ## Test reconstruction for each channel, using the other one 
@@ -203,23 +170,9 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
                 curr_name = p["ch_names"][i]
                 av_ch = list(range(len(X_test)))
                 av_ch.remove(i)
-                # try to reconstruct it from the other ones
-                ch_recon = model.predict(X_test_list, mask_test_list, nt=ntp, av_ch=av_ch, task='recon')
-                #for all existing timepoints
-
-                y_true = X_test[i]
-                # swap dims to iterate over subjects
-                y_pred = np.transpose(ch_recon["xnext"][i], (1,0,2))
-                y_pred = [x_pred[:len(x_true)] for (x_pred, x_true) in zip(y_pred, y_true)]
-
-                #prepare it timepoint wise
-                y_pred = [tp for subj in y_pred for tp in subj]
-                y_true = [tp for subj in y_true for tp in subj]
-
-                mae_rec_ch = mean_absolute_error(y_true, y_pred)
-
+                mae_rec = eval_reconstruction(model, X_test, X_test_list, mask_test_list, av_ch, i)
                 # Get MAE result for that specific channel over all timepoints
-                results[f"recon_{curr_name}_mae"] = mae_rec_ch
+                results[f"recon_{curr_name}_mae"] = mae_rec
 
 
         loss = {

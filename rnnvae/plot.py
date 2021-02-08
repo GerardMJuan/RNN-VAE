@@ -247,7 +247,6 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                     #  if qzx for i or for j is none, also continue
                     if not qzx[i][tp] or not qzx[j][tp]:
                         continue
-                    # import pdb; pdb.set_trace()
                     xii = qzx[i][tp].loc.cpu().detach().numpy()[:, comp]
                     xjj = qzx[j][tp].loc.cpu().detach().numpy()[:, comp]
                     sii = qzx[i][tp].scale.cpu().detach().numpy()[:, comp]
@@ -330,9 +329,9 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
         # One figure per channel
         #  Uncorrelated relationsips expected between latent components
         for ch in range(channels):
-            fig, axs = plt.subplots(comps, comps, figsize=(20,20))
+            fig, axs = plt.subplots(len(itercomps), len(itercomps), figsize=(20,20))
             fig.suptitle(model.ch_name[ch], fontsize=30)
-            for i, j in itertools.product(range(comps), range(comps)):
+            for i, j in itertools.product(range(len(itercomps)), range(len(itercomps))):
                 if i == j:
                     axs[j, i].text(
                         0.5, 0.5, r'$z_{' + str(i) + '}$',
@@ -348,8 +347,8 @@ def plot_latent_space(model, qzx, max_tp, classificator=None, pallete_dict=None,
                             continue
                         if not qzx[ch][tp]:
                             continue
-                        xii = qzx[ch][tp].loc.cpu().detach().numpy()[:, i]
-                        xjj = qzx[ch][tp].loc.cpu().detach().numpy()[:, j]
+                        xii = qzx[ch][tp].loc.cpu().detach().numpy()[:, itercomps[i]]
+                        xjj = qzx[ch][tp].loc.cpu().detach().numpy()[:, itercomps[j]]
 
                         if mask is not None:
                             #Convert to cpu bc we are still using tensors, very dirty but thats life
