@@ -12,6 +12,11 @@ import seaborn as sns
 import pickle
 from rnnvae import rnnvae_h
 import torch
+
+#IMPORT FROM THE TEST CONFIG WE WANT
+from fig_gen.configs import testconfig1 as params
+
+
 # function to prepare data for brainpainter
 def prepare_brainpainter_data(in_csv_train, suffix, synth_data, out_dir, name_fig):
     """
@@ -33,7 +38,7 @@ def prepare_brainpainter_data(in_csv_train, suffix, synth_data, out_dir, name_fi
     norm_val = pickle.load( open(f"data/norm_values/brainpainter_norm.pkl", 'rb'))
     mean_cn = norm_val["mean"]
     std_cn = norm_val["std"]
-
+    import pdb; pdb.set_trace()
     # we compute mean of ad and mean of cn to discover the sign of the trajectory
     # for each biomarker (which should always be negative but i dont know anymore)
 
@@ -57,9 +62,12 @@ def prepare_brainpainter_data(in_csv_train, suffix, synth_data, out_dir, name_fi
 
 if __name__ == "__main__":
     #paths
-    out_dir = "/homedtic/gmarti/CODE/RNN-VAE/fig_gen/"
-    in_csv_train = "data/multimodal_no_petfluid.csv"
-    in_csv_test = "data/subj_for_brainpainter.csv"
+    out_dir = params.out_dir
+    in_csv_train = params.in_csv_train
+    in_csv_test = params.in_csv_test
+    # out_dir = "/homedtic/gmarti/CODE/RNN-VAE/fig_gen/"
+    # in_csv_train = "data/multimodal_no_petfluid.csv"
+    #in_csv_test = "data/subj_for_brainpainter.csv"
 
     # Load the data
     # load full dataset and load the training dataset
@@ -71,7 +79,7 @@ if __name__ == "__main__":
     X_test, _, Y_test, _, cols = load_multimodal_data(in_csv_test, channels, ch_type, train_set=1.0, normalize=True, return_covariates=True)
 
     # load the model
-    model_dir = "experiments_mc_models/allch_fulltrain/"
+    model_dir = params.model_dir 
 
     p = eval(open(model_dir + "params.txt").read())
     print(p)
@@ -82,13 +90,26 @@ if __name__ == "__main__":
     if torch.cuda.is_available():
         torch.cuda.set_device(DEVICE_ID)
 
-    model = rnnvae_h.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
-                            p["hidden"], p["n_layers"], p["hidden"],
-                            p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
-                            p["clip"], p["n_epochs"], p["batch_size"], 
-                            p["n_channels"], p["ch_type"], p["n_feats"], DEVICE, print_every=100, 
-                            phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
-                            dropout=p["dropout"], dropout_threshold=p["drop_th"])
+    # either "old" or "new"
+    type_model = params.type_model
+    if type_model == "old":
+        #  OLD VERSION
+        model = rnnvae_h.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
+                                p["hidden"], p["n_layers"], p["hidden"],
+                                p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
+                                p["clip"], p["n_epochs"], p["batch_size"], 
+                                p["n_channels"], p["ch_type"], p["n_feats"], [None, None, None, None, None], DEVICE, print_every=100, 
+                                phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
+                                dropout=p["dropout"], dropout_threshold=p["drop_th"])
+    else:
+        model = rnnvae_h.MCRNNVAE(p["h_size"], p["x_hidden"], p["x_n_layers"], 
+                                p["z_hidden"], p["z_n_layers"], p["enc_hidden"],
+                                p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
+                                p["clip"], p["n_epochs"], p["batch_size"], 
+                                p["n_channels"], p["ch_type"], p["n_feats"], p["c_z"], DEVICE, print_every=100, 
+                                phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
+                                dropout=p["dropout"], dropout_threshold=p["drop_th"])
+
     model = model.to(DEVICE)
     model.load(model_dir+'model.pt')
 
@@ -110,11 +131,8 @@ if __name__ == "__main__":
             X_test_list.append(X_test_pad.to(DEVICE))
 
         ntp = X_test_subj[0].shape[0]
-        print(len(X_test_list))
-        print(len(mask_test_list))
-        # reconstruct from the other two channels
-        #av_ch = ['_cog', '_demog', '_apoe']
-        av_ch = [2, 3, 4]
+
+        av_ch = params.av_ch
         X_test_fwd = model.predict(X_test_list, mask_test_list, ntp, av_ch, task='recon')
         X_test_fwd = X_test_fwd["xnext"]
         #Remove normalization
@@ -128,15 +146,9 @@ if __name__ == "__main__":
         ##############
         ###### TESTING
         ##############
-        # subj = 7
-        # subj_to_plot = np.concatenate((X_test[0][subj], X_test[1][subj]),axis=1)
-        # print(Y_test['DX'][subj])
-        # print(Y_test['DX_bl'][subj])
-        # print(Y_test['Years_bl'][subj])
-
-        #Prepare final info with columns
-        #load the templates
-        # compare cols to the columns of the template, see which one fits which
-        col_type = ['_mri_vol','_mri_cort']
-        # save it to disk using the brainpainter function
-        prepare_brainpainter_data(in_csv_train, col_type, subj_to_plot, out_dir, f'subj{i}')
+        col_type = params.col_type
+        
+        if ['_mri_vol','_mri_cort'] in col_type:
+            # save it to disk using the brainpainter function
+            prepare_brainpainter_data(in_csv_train, col_type, subj_to_plot, out_dir, f'subj{i}')
+        # Save the rest of values normally

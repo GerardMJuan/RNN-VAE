@@ -26,8 +26,7 @@ def pandas_to_data_timeseries_var(df, suffix, feat, normalize=True, id_col = 'PT
     df_feats = df.loc[:, feat]
 
     if normalize:
-
-        #load the data
+        #load the data  
         norm_val = pickle.load( open(f"{norm_dict}{suffix}_norm.pkl", 'rb'))
         df_feats = (df_feats - norm_val["mean"]) / norm_val["std"]
 
@@ -216,7 +215,7 @@ def load_multimodal_data(csv_path, suffixes_list, type_modal, train_set=0.8, nor
 
             # df_train = data_df.iloc[train_dataset]
             #df_test =  data_df.iloc[test_dataset]
-        else:
+        else: 
             df_train = data_df_base.reset_index(drop=True)
 
         # Return the features in the correct shape (Nsamples, timesteps, nfeatures)

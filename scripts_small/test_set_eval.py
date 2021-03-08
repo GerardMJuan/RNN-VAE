@@ -9,7 +9,7 @@ import torch
 from torch import nn
 import numpy as np
 from sklearn.metrics import mean_absolute_error
-from rnnvae import rnnvae_h
+from rnnvae import rnnvae_s
 from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
 from rnnvae.eval import eval_reconstruction, eval_prediction
@@ -18,16 +18,17 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/test_loss_t0/h_10_z_30_x_10_cz_2/"
-test_csv = "/homedtic/gmarti/CODE/RNN-VAE/data/multimodal_no_petfluid_test.csv"
+out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/no_phi_x/test_sameparams/"
+test_csv = "/homedtic/gmarti/CODE/RNN-VAE/data/multimodal_no_petfluid_train.csv"
 data_cols = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
-dropout_threshold_test = 0.25
+dropout_threshold_test = 0.1
 
-long_to_bl = True #variable to decide if we have transformed the long to bl or not.
 ch_bl = [] ##STORE THE CHANNELS THAT WE CONVERT TO LONG BUT WERE BL
 
 #load parameters
 p = eval(open(out_dir + "params.txt").read())
+
+long_to_bl = p["long_to_bl"] #variable to decide if we have transformed the long to bl or not.
 
 # DEVICE
 ## Decidint on device on device.
@@ -67,16 +68,8 @@ for x_ch in X_test:
     X_test_pad[torch.isnan(X_test_pad)] = 0
     X_test_list.append(X_test_pad.to(DEVICE))
 
-# model = rnnvae_h.MCRNNVAE(p["h_size"], p["x_hidden"], p["x_n_layers"], 
-#                         p["z_hidden"], p["z_n_layers"], p["enc_hidden"],
-#                        p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
-#                         p["clip"], p["n_epochs"], p["batch_size"], 
-#                         p["n_channels"], p["ch_type"], p["n_feats"], DEVICE, print_every=100, 
-#                         phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
-#                         dropout=p["dropout"], dropout_threshold=p["drop_th"])
 
-model = rnnvae_h.MCRNNVAE(p["h_size"], p["x_hidden"], p["x_n_layers"], 
-                        p["z_hidden"], p["z_n_layers"], p["enc_hidden"],
+model = rnnvae_s.MCRNNVAE(p["h_size"], p["enc_hidden"],
                         p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
                         p["clip"], p["n_epochs"], p["batch_size"], 
                         p["n_channels"], p["ch_type"], p["n_feats"], p["c_z"], DEVICE, print_every=100, 
@@ -85,8 +78,9 @@ model = rnnvae_h.MCRNNVAE(p["h_size"], p["x_hidden"], p["x_n_layers"],
 
 model = model.to(DEVICE)
 model.load(out_dir+'model.pt')
-print(model.dropout_comp)
-model.dropout_threshold = dropout_threshold_test
+if p["dropout"]:
+    print(model.dropout_comp)
+    model.dropout_threshold = dropout_threshold_test
 
 ####################################
 # IF DROPOUT, CHECK THE COMPONENTS AND THRESHOLD AND CHANGE IT
@@ -131,7 +125,6 @@ ax = sns.heatmap(df_crossrec, annot=True, fmt=".2f")
 plt.savefig(out_dir + "figure_crossrecon.png")
 # SAVE AS FIGURE
 df_crossrec.to_latex(out_dir+"table_crossrecon.tex")
-
 
 ############################
 ## Test reconstruction for each channel, using the rest

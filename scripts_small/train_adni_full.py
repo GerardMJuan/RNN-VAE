@@ -9,7 +9,7 @@ import torch
 from torch import nn
 import numpy as np
 from sklearn.metrics import mean_absolute_error
-from rnnvae import rnnvae_h
+from rnnvae import rnnvae_s
 from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
 from sklearn.metrics import mean_squared_error, mean_absolute_error
@@ -95,8 +95,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
     ntp = max(max([x.shape[0] for x in X_train_list]), max([x.shape[0] for x in X_test_list]))
 
-    model = rnnvae_h.MCRNNVAE(p["h_size"], p["x_hidden"], p["x_n_layers"], 
-                            p["z_hidden"], p["z_n_layers"], p["enc_hidden"],
+    model = rnnvae_s.MCRNNVAE(p["h_size"], p["enc_hidden"],
                             p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
                             p["clip"], p["n_epochs"], p["batch_size"], 
                             p["n_channels"], p["ch_type"], p["n_feats"], p["c_z"], DEVICE, print_every=100, 
@@ -168,10 +167,6 @@ if __name__ == "__main__":
     params = {
         "h_size": 10,
         "z_dim": 30,
-        "x_hidden": 10,
-        "x_n_layers": 1,
-        "z_hidden": 30,
-        "z_n_layers": 0,
         "enc_hidden": 120,
         "enc_n_layers": 0,
         "dec_hidden": 120,
@@ -192,7 +187,7 @@ if __name__ == "__main__":
         "long_to_bl": True
     }
 
-    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/test_loss_t0/h_10_z_30_x_10_cz_2/"
+    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/no_phi_x/test_sameparams/"
     #out_dir = "/homedtic/gmarti/EXPERIMENTS/RNN-VAE/experiments_postthesis/_h_10_x_10_z_30_cz_5/"
     csv_path = "data/multimodal_no_petfluid_train.csv"
     loss = run_experiment(params, csv_path, out_dir, channels)

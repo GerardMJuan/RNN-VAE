@@ -73,7 +73,7 @@ def eval_prediction(model, X_test, t_pred, pred_ch, DEVICE):
             for tpx in tp:
                 y_pred.append(X_test_xnext[i][tpx, j, :])
             j += 1
-        #Process it to predict it   
+        #Process it to predict it
         mae_tp_ch = mean_absolute_error(y_true, y_pred)
         results.append(mae_tp_ch)
     return results
@@ -93,8 +93,8 @@ def eval_reconstruction(model, X, X_test, mask_test, av_ch, recon_ch):
     assert model.is_fitted, "Model is not fitted!"
     
     #Number of time points is the length of the channel we want to reconstruct
-    #ntp = len(X_test[recon_ch])
-    ntp = 1
+    ntp = len(X_test[recon_ch])
+    #ntp = 1
 
     # try to reconstruct it from the other ones
     ch_recon = model.predict(X_test, mask_test, nt=ntp, av_ch=av_ch, task='recon')
@@ -103,17 +103,17 @@ def eval_reconstruction(model, X, X_test, mask_test, av_ch, recon_ch):
     y_true = X[recon_ch]
 
     # swap dims to iterate over subjects
+    #selecting only the real timepoints
     y_pred = np.transpose(ch_recon["xnext"][recon_ch], (1,0,2))
     y_pred = [x_pred[:len(x_true)] for (x_pred, x_true) in zip(y_pred, y_true)]
 
     #prepare it timepoint wise
     #TODO: DO WE REALLY NEED TO DO THIS? SHOULDNT WE TREAT EACH SUBJECT JOINTLY?
-
-    y_pred = [subj[0] for subj in y_pred]
-    y_true = [subj[0] for subj in y_true]
-
-    #y_pred = [tp for subj in y_pred for tp in subj]
-    #y_true = [tp for subj in y_true for tp in subj]
+    #y_pred = [subj for subj in y_pred]
+    #y_true = [subj for subj in y_true]
+    y_pred = [tp for subj in y_pred for tp in subj]
+    y_true = [tp for subj in y_true for tp in subj]
+    # y_pred = [np.random.rand(*x.shape) for x in y_pred]
 
     mae_rec = mean_absolute_error(y_true, y_pred)
     return mae_rec
