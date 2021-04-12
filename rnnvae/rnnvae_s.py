@@ -418,8 +418,8 @@ class MCRNNVAE(nn.Module):
         for i in range(self.n_channels):
             # THIS HAS BEEN HARD COMMENTED, PROBABLY NEEDS TO BE THE COMBINATION
             # TRAIN WITH THE OTHER VERSION?
-            # x_hat = torch.stack([pxz_t_list[e][i].loc for e in range(self.n_channels)]).mean(0)
-            x_hat = pxz_t_list[i][i].loc
+            x_hat = torch.stack([pxz_t_list[e][i].loc for e in range(self.n_channels)]).mean(0)
+            # x_hat = pxz_t_list[i][i].loc
             xhat_list.append(x_hat)
 
             if self.ch_type[i] == 'long':
@@ -778,6 +778,11 @@ class MCRNNVAE(nn.Module):
         zp = fwd_return['zp']
         kl = 0
         ll = 0
+        kl_ch = {}
+        for ch in range(self.n_channels):
+            kl_ch[ch] = 0
+            kl_ch[f"{ch}_n"] = 0
+
         # Need to compute the number of timepoints of each subject at each channel
         # in order to normalize later by number of timepoints
         #this probably would work better in a function to compute it only once
@@ -815,6 +820,8 @@ class MCRNNVAE(nn.Module):
                     kl_base = kl_base * ntp_subj_list[ch] # apply the cross-subject mean
                     kl_masked = torch.masked_select(kl_base, mask_i[i]) # apply the timepoint mask
                     kl += kl_masked.mean(0)
+                    kl_ch[ch] += kl_masked.mean(0)
+                    kl_ch[f"{ch}_n"] += 1
 
                 for j in range(len(curr_channels)):
                     ch2 = curr_channels[j]
@@ -833,6 +840,10 @@ class MCRNNVAE(nn.Module):
                         ll += ll_masked.mean(0)
 
             t += 1
+        
+        #Sum the weighted kl
+        #for ch in range(self.n_channels):
+        #    kl += kl_ch[ch] / kl_ch[f"{ch}_n"]
 
         total = kl - ll
 
@@ -844,6 +855,9 @@ class MCRNNVAE(nn.Module):
 
         if self.training:
             self.loss = self.save_loss(losses, self.loss)
+            for i in range(self.n_channels):
+                self.kl_loss[i].append(kl_ch[i])
+
             return total
         else:
             return losses
@@ -925,6 +939,9 @@ class MCRNNVAE(nn.Module):
             'kl': [],
             'll': []
         }
+        self.kl_loss = {}
+        for ch in range(self.n_channels):
+            self.kl_loss[ch] = []
 
     def average_batch_loss(self, nbatches, loss):
         """

@@ -18,8 +18,8 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/no_phi_x/test_sameparams/"
-test_csv = "/homedtic/gmarti/CODE/RNN-VAE/data/multimodal_no_petfluid_train.csv"
+out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metatest_retest1503/_h_50_z_30_x_hid_10_cz_5/"
+test_csv = "/homedtic/gmarti/CODE/RNN-VAE/data/multimodal_no_petfluid_test.csv"
 data_cols = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
 dropout_threshold_test = 0.1
 

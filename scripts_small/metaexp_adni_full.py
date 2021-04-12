@@ -19,9 +19,9 @@ constrain1=[None, None, 5, 5, 5]
 constrain2=[None, None, 2, 2, 2]
 
 params = {
-    "h_size": [10,30],
-    "z_dim": [15,20],
-    "x_hidden": [10,30],
+    "h_size": [10,30,50],
+    "z_dim": [15,20,30],
+    "x_hidden": [10],
     "x_n_layers": [1],
     "z_hidden": [20],
     "z_n_layers": [1],
@@ -50,7 +50,7 @@ csv_path = "data/multimodal_no_petfluid_train.csv"
 #Create two lists, that will store the dictionaries of the loss that later will become a dataframe
 list_loss = []
 
-base_out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metatest_loss_t0_GRU_lin/"
+base_out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metatest_retest1503_small/"
 
 if not os.path.exists(base_out_dir):
     os.makedirs(base_out_dir)
@@ -69,7 +69,7 @@ for p in ParameterGrid(params):
     learning_rate = p["learning_rate"]
     c_z = p["c_z"]
 
-    out_dir = f"{base_out_dir}_h_{h_size}_z_{z_dim}_x_hid_{x_hidden}_cz_{c_z[3]}/"
+    out_dir = f"{base_out_dir}_h_{h_size}_z_{z_dim}_cz_{c_z[3]}/"
 
     t = time.time()
     loss = run_experiment(p, csv_path, out_dir, channels)

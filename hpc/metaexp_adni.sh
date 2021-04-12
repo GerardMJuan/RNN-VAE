@@ -4,8 +4,8 @@
 #SBATCH --workdir=/homedtic/gmarti/CODE/RNN-VAE
 #SBATCH --mem 32G
 #SBATCH --gres=gpu:1
-#SBATCH -o LOGS/vae1_%J.out # STDOUT
-#SBATCH -e LOGS/vae1_%j.err # STDERR
+#SBATCH -o LOGS/vae_small_%J.out # STDOUT
+#SBATCH -e LOGS/vae_small_%j.err # STDERR
 
 source /etc/profile.d/lmod.sh
 source /etc/profile.d/easybuild.sh
@@ -18,4 +18,4 @@ module --ignore-cache load cuDNN/7.6.5.32-CUDA-10.2.89
 source /homedtic/gmarti/pytorch/bin/activate 
 
 # python scripts_mc/metaexp_adni.py
-python scripts_mc_moreparams/metaexp_adni_full.py
+python scripts_small/metaexp_adni_full.py

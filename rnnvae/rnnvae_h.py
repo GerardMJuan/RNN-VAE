@@ -826,6 +826,9 @@ class MCRNNVAE(nn.Module):
         zp = fwd_return['zp']
         kl = 0
         ll = 0
+
+        
+
         # Need to compute the number of timepoints of each subject at each channel
         # in order to normalize later by number of timepoints
         #this probably would work better in a function to compute it only once
@@ -911,6 +914,10 @@ class MCRNNVAE(nn.Module):
         zp = fwd_return['zp']
         kl = 0
         ll = 0
+        kl_ch = {}
+        for ch in range(self.n_channels):
+            kl_ch[ch] = []
+
         curr_channels = list(range(self.n_channels))
         t = 0
         #Mentre hi hagi canals uqe encara tinguin tps
@@ -934,7 +941,7 @@ class MCRNNVAE(nn.Module):
                 if not torch.sum(mask_i[i]) == 0:
                     kl_masked = torch.masked_select(kl_base, mask_i[i])
                     kl += kl_masked.mean(0)
-
+                    kl_ch[ch] += kl_masked.mean(0)
                 for j in range(len(curr_channels)):
                     ch2 = curr_channels[j]
                     # ch = latent comp; ch2 = decoder
@@ -953,11 +960,13 @@ class MCRNNVAE(nn.Module):
         losses = {
             'total': total,
             'kl': kl,
-            'll': ll
+            'll': ll,
         }
 
         if self.training:
             self.loss = self.save_loss(losses, self.loss)
+            for i in range(self.n_channels):
+                self.kl_loss[i].append(kl_ch[i])
             return total
         else:
             return losses
@@ -1039,6 +1048,9 @@ class MCRNNVAE(nn.Module):
             'kl': [],
             'll': []
         }
+        self.kl_loss = {}
+        for ch in range(self.n_channels):
+            self.kl_loss[ch] = []
 
     def average_batch_loss(self, nbatches, loss):
         """

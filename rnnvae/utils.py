@@ -8,6 +8,32 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.model_selection import GroupShuffleSplit, ShuffleSplit, StratifiedShuffleSplit
 import pickle
 
+def denormalize_timepoint(x, suffix, norm_dict='data/norm_values/'):
+    """
+    Denormalize a single timepoint
+    """
+    norm_val = pickle.load( open(f"{norm_dict}{suffix}_norm.pkl", 'rb'))
+    x_denorm = x * norm_val["std"] + norm_val["mean"]
+    return x_denorm
+
+def denormalize(X, suffixes=['mri_vol', 'mri_cort', 'cog', 'demog', 'apoe']):
+    """
+    Quick function to denormalize
+
+    the data.
+    X: input data, list of data channels
+    suffixes: suffixes of each of the data channels to denormalize
+    norm_dict: the directory where the normalizing values are
+    """
+    X_denorm = []
+    for (x_ch, suffix) in zip(X, suffixes):
+        #apply denorm over each timepoint and subject
+        x_ch_denorm = [np.array([denormalize_timepoint(x_t, suffix) for x_t in x]) for x in x_ch]
+        X_denorm.append(x_ch_denorm)
+
+    return X_denorm
+
+
 def pandas_to_data_timeseries_var(df, suffix, feat, normalize=True, id_col = 'PTID', norm_dict = 'data/norm_values/'):
     """
     Quick function that converts a pandas dataframe with the features

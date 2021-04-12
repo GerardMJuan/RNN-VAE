@@ -14,6 +14,7 @@ from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import seaborn as sns
+import matplotlib.pyplot as plt
 
 def run_experiment(p, csv_path, out_dir, data_cols=[]):
     """
@@ -132,6 +133,23 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     plot_total_loss(model.loss['kl'], model.val_loss['kl'], "kl_loss", out_dir, "kl_loss.png")
     plot_total_loss(model.loss['ll'], model.val_loss['ll'], "ll_loss", out_dir, "ll_loss.png") #Negative to see downard curve
 
+    #plot the kl loss!!
+    plt.figure()
+    for i in range(p["n_channels"]):
+        print(i)
+        plt.plot(range(len(model.kl_loss[i])), model.kl_loss[i], '-', label=f'Ch: {i}')
+
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+
+    plt.legend(loc='upper left')
+    plt.title("Losses")
+
+    plt.savefig(out_dir + "kl_individual_loss" + '.png')
+    plt.close()
+
+
+
     #Compute mse and reconstruction loss
     #General mse and reconstruction over 
     # test_loss = model.recon_loss(X_test_fwd, target=X_test_pad, mask=mask_test_tensor)
@@ -173,7 +191,7 @@ if __name__ == "__main__":
         "dec_n_layers": 0,
         "n_epochs": 2000,
         "clip": 10,
-        "learning_rate": 5e-3,
+        "learning_rate": 1e-3,
         "batch_size": 128,
         "seed": 1714,
         "n_channels": len(channels),
@@ -187,7 +205,7 @@ if __name__ == "__main__":
         "long_to_bl": True
     }
 
-    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/no_phi_x/test_sameparams/"
+    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/no_phi_x/testing_kl/"
     #out_dir = "/homedtic/gmarti/EXPERIMENTS/RNN-VAE/experiments_postthesis/_h_10_x_10_z_30_cz_5/"
     csv_path = "data/multimodal_no_petfluid_train.csv"
     loss = run_experiment(params, csv_path, out_dir, channels)

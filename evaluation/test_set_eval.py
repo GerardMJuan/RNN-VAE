@@ -18,10 +18,10 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/test_loss_t0/h_10_z_30_x_10_cz_2/"
+out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metatest_retest1503/_h_50_z_30_x_hid_10_cz_5/"
 test_csv = "/homedtic/gmarti/CODE/RNN-VAE/data/multimodal_no_petfluid_test.csv"
 data_cols = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
-dropout_threshold_test = 0.25
+dropout_threshold_test = 0.2
 
 long_to_bl = True #variable to decide if we have transformed the long to bl or not.
 ch_bl = [] ##STORE THE CHANNELS THAT WE CONVERT TO LONG BUT WERE BL
@@ -117,10 +117,10 @@ results = np.zeros((len(X_test), len(X_test))) #store the results, will save lat
 
 for i in range(len(X_test)):
     for j in range(len(X_test)):
-        curr_name = p["ch_names"][i]
-        to_recon = p["ch_names"][j]
-        av_ch = [j]
-        mae_rec = eval_reconstruction(model, X_test, X_test_list, mask_test_list, av_ch, i)
+        curr_name = p["ch_names"][j]
+        to_recon = p["ch_names"][i]
+        av_ch = [i]
+        mae_rec = eval_reconstruction(model, X_test, X_test_list, mask_test_list, av_ch, j)
         results[i,j] = mae_rec
         # Get MAE result for that specific channel over all timepoints
         print(f"recon_{curr_name}_from{to_recon}_mae: {mae_rec}")
@@ -131,7 +131,6 @@ ax = sns.heatmap(df_crossrec, annot=True, fmt=".2f")
 plt.savefig(out_dir + "figure_crossrecon.png")
 # SAVE AS FIGURE
 df_crossrec.to_latex(out_dir+"table_crossrecon.tex")
-
 
 ############################
 ## Test reconstruction for each channel, using the rest

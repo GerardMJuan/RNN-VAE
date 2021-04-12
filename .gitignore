@@ -151,3 +151,5 @@ fig_gen/
 #script for the environment
 env.sh
 experiments_mc_newloss/testing_moreparams/params.txt
+
+baselines/
