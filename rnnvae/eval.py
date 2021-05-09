@@ -59,10 +59,12 @@ def eval_prediction(model, X_test, t_pred, pred_ch, DEVICE):
         #create y_true
         for x in X_ch:
             if len(x) > t_pred:
-                for k in range(t_pred):
+                for k in reversed(range(t_pred)):
+                    # this is on the opposite order so that it works for t_pred > 1
+                    # because if not, comparison doesnt work
                     y_true.append(x[-k])
 
-        last_tp = [[len(x)-(tx+1) for tx in range(t_pred)] for x in X_ch] # last tp is max size of original data minus one
+        last_tp = [[len(x)-(tx+1) for tx in range(t_pred)] for x in X_ch] # last tp is max size of original data minus t_pred
         y_pred = []
         # for each subject, select the last tps (that we want to predict) NOT ONLY ONE
         j = 0
@@ -104,7 +106,7 @@ def eval_reconstruction(model, X, X_test, mask_test, av_ch, recon_ch):
 
     # swap dims to iterate over subjects
     #selecting only the real timepoints
-    y_pred = np.transpose(ch_recon["xnext"][recon_ch], (1,0,2))
+    y_pred = np.transpose(ch_recon["xnext"][recon_ch], (1,0,2)) # transpose to obtain dim that are comparable to X_test
     y_pred = [x_pred[:len(x_true)] for (x_pred, x_true) in zip(y_pred, y_true)]
 
     #prepare it timepoint wise

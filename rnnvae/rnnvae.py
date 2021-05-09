@@ -21,6 +21,10 @@ For n_channels = 1, results should be the same as a normal network.
 Alternative implmeentation:
 https://github.com/crazysal/VariationalRNN/blob/master/VariationalRecurrentNeuralNetwork-master/model.py
 
+SPECIFICATIONS OF THIS VERSION
+RNN FOR EACH CHANNEL
+PHI_Z SHOULD BE SHARED
+
 """
 import numpy as np
 import torch
@@ -91,16 +95,20 @@ class PhiBlock(nn.Module):
     of the full network.
     """
 
-    def __init__(self, input_size, hidden_size, n_layers):
+    def __init__(self, input_size, hidden_size, n_layers, c_z=None):
 
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.n_layers = n_layers
+        self.c_z = c_z
+        if self.c_z is None:
+            self.c_z = input_size 
 
         #Define module list
         self.init_block()
- 
+
+
     def init_block(self):
         """
         Auxliar function to initalize the block
@@ -108,16 +116,22 @@ class PhiBlock(nn.Module):
         TODO: is there an identity layer that i could use here when phi_x_n=0?
         """
         self.phi_layers = nn.ModuleList()
+        if self.c_z < self.input_size:
+            self.input_size = self.c_z
+            self.hidden_size = self.c_z
+
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.phi_layers.append(nn.Linear(self.input_size, self.hidden_size))
-            # self.phi_layers.append(nn.ReLU())
+            self.phi_layers.append(nn.ReLU())
             self.input_size = self.hidden_size
 
     def forward(self, x):
         """
         Forward pass of the ModuleList
         """
+        x = x[:,:self.c_z] #Select only the first x dimensions
+
         for i in range(len(self.phi_layers)):
             x = self.phi_layers[i](x)
         return x
@@ -128,7 +142,7 @@ class VariationalBlock(nn.Module):
     receiving an input and the forward pass generating a Normal distribution.
     """
 
-    def __init__(self, input_size, hidden_size, latent_size, n_layers, sigmoid_mean=False, log_alpha=None):
+    def __init__(self, input_size, hidden_size, latent_size, n_layers, sigmoid_mean=False, log_alpha=None, c_z=None):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -136,23 +150,27 @@ class VariationalBlock(nn.Module):
         self.n_layers = n_layers
         self.sigmoid_mean = sigmoid_mean
         self.log_alpha = log_alpha
+        self.c_z = c_z
+        if self.c_z is None:
+            self.c_z = input_size 
+
         #Define module list
         self.init_block()
 
-
     def init_block(self):
         self.var_layers = nn.ModuleList()
+        if self.c_z < self.input_size:
+            self.input_size = self.c_z
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.var_layers.append(nn.Linear(self.input_size, self.hidden_size))
-            # self.var_layers.append(nn.ReLU())
+            self.var_layers.append(nn.ReLU())
             self.input_size = self.hidden_size
 
-        #TODO: MU COULD BE USING A SIGMOID FOR THE OUTPUT
         if self.sigmoid_mean:
             self.to_mu = nn.Sequential(
-                nn.Linear(self.input_size, self.latent_size),
-                nn.Sigmoid()) 
+                nn.Linear(self.input_size, self.latent_size))
+                # nn.Sigmoid()) 
         else:
             self.to_mu = nn.Linear(self.input_size, self.latent_size)
         
@@ -164,6 +182,8 @@ class VariationalBlock(nn.Module):
 
 
     def forward(self, x):
+        x = x[:,:self.c_z] #Select only the first x dimensions
+
         for i in range(len(self.var_layers)):
             x = self.var_layers[i](x)
         mu = self.to_mu(x)
@@ -171,13 +191,13 @@ class VariationalBlock(nn.Module):
             logvar = self.to_logvar(x)
             x = Normal(
                 loc = mu,
-                scale = logvar.exp().pow(0.5)
+                scale = logvar.exp() + 1e-3#.pow(0.5)
             )
         else:
             logvar = compute_logvar(mu, self.log_alpha)
             x = Normal(
                 loc=mu,
-                scale=logvar.exp().pow(0.5)
+                scale=logvar.exp() + 1e-3#.pow(0.5) + 1e-3
             )
 
         return x
@@ -223,7 +243,7 @@ class MCRNNVAE(nn.Module):
     def __init__(self, h_size, phi_x_hidden, phi_x_n, 
                  phi_z_hidden, phi_z_n, enc_hidden, enc_n, latent, dec_hidden, 
                  dec_n, clip, nepochs, batch_size, n_channels, ch_type,
-                 n_feats, device,
+                 n_feats, c_z, device,
                  model_name_dict=None, print_every=100, phi_layers=True, 
                  sigmoid_mean=False, dropout=False, dropout_threshold=0.2):
 
@@ -249,12 +269,15 @@ class MCRNNVAE(nn.Module):
         self.dec_n = enc_n
         self.dropout = dropout
         self.dropout_threshold = dropout_threshold #dropout threshold
+        self.c_z = c_z
 
         # other parameters
         self.clip = clip
         self.print_every = print_every
         self.batch_size = batch_size # we only use  this for loss visualization
         self.epochs = nepochs
+        self.curr_epoch = 0
+        self.reduced_training = 50 ##NUMBER OF EPOCHS UNTIL WE WILL MULTIPLY THE STD BY 0.1 
         self.phi_layers = phi_layers #if we use the phi functions or not 
         self.sigmoid_mean = sigmoid_mean # if we use sigmoid for the mean in the decoder and encoder
         self.sampling=False
@@ -278,12 +301,15 @@ class MCRNNVAE(nn.Module):
 
         for ch in range(self.n_channels): 
 
-            #OVERWITING H SIZE
+            # HARDCODE PHI X HIDDEN TO BE THE SAME SIZE AS NFEATS
+            self.phi_x_hidden = self.n_feats[ch] 
 
-            if not self.phi_layers:
-                self.phi_x_hidden = self.n_feats[ch] 
+            #IF CZ, PHI_Z_HIDDEN IS CZ
+            if self.c_z[ch] is not None:
+                self.phi_z_hidden = self.c_z[ch]
+            else:
                 self.phi_z_hidden = self.latent
-                
+
             #########################################
             # Define the layers for each channel. For channels that are baseline, the channels involving H should change the inpu size and 
             if self.ch_type[ch] == 'bl':
@@ -298,15 +324,16 @@ class MCRNNVAE(nn.Module):
 
             ### ENCODER
             self.ch_phi_x.append(PhiBlock(self.n_feats[ch], self.phi_x_hidden, 1)) # hardcode 1 layer
-            self.ch_enc.append(VariationalBlock(self.enc_input, self.enc_hidden, self.latent, self.enc_n, sigmoid_mean=self.sigmoid_mean, log_alpha=self.log_alpha))
+            # hARDCODED THAT HIDDEN IS SAME SIZE AS INPUT
+            self.ch_enc.append(VariationalBlock(self.enc_input, self.enc_input, self.latent, self.enc_n, sigmoid_mean=self.sigmoid_mean, log_alpha=self.log_alpha))
 
             ### DECODER
-            self.ch_phi_z.append(PhiBlock(self.latent, self.phi_z_hidden, 1)) # hardcode 1 layer
-            self.ch_dec.append(VariationalBlock(self.dec_input, self.dec_hidden, self.n_feats[ch], self.dec_n, sigmoid_mean=self.sigmoid_mean))
+            self.ch_phi_z.append(PhiBlock(self.latent, self.phi_z_hidden, 1, c_z=self.c_z[ch])) # hardcode 1 layer
+            # HARDCODED THAT HIDDEN IS SAME SIZE AS INPUT
+            self.ch_dec.append(VariationalBlock(self.dec_input, self.dec_input, self.n_feats[ch], self.dec_n, sigmoid_mean=self.sigmoid_mean))# c_z=self.c_z[ch]))
 
             ### RNN 
-            self.ch_RNN.append(nn.RNN(self.phi_x_hidden + self.phi_z_hidden, self.h_size, 1))
-
+            self.ch_RNN.append(nn.GRU(self.phi_x_hidden + self.phi_z_hidden, self.h_size, 1))
 
         #Init KL and loss
         self.optimizer = None
@@ -416,11 +443,14 @@ class MCRNNVAE(nn.Module):
     
             for j in range(self.n_channels):
                 # if its not longitudinal, do not use ht
+                if self.phi_layers: phi_zx_t_ch = self.ch_phi_z[j](z_t)
+                else: phi_zx_t_ch = z_t
+
                 if self.ch_type[j] == "long":
                     # z = phi_zx_t
-                    z = torch.cat([phi_zx_t, ht[-1]], 1)
+                    z = torch.cat([phi_zx_t_ch, ht[-1]], 1)
                 else:
-                    z = phi_zx_t
+                    z = phi_zx_t_ch
                 pxz_t = self.ch_dec[j](z)  # Decode from each different channel
                 pxz_t_list[i].append(pxz_t)
 
@@ -434,6 +464,8 @@ class MCRNNVAE(nn.Module):
         for i in range(self.n_channels):
             #compute xhat and save it for later
             x_hat = torch.stack([pxz_t_list[e][i].loc for e in range(self.n_channels)]).mean(0)
+            # x_hat = pxz_t_list[i][i].loc
+
             xhat_list.append(x_hat)
 
             if i in av_ch:
@@ -460,7 +492,7 @@ class MCRNNVAE(nn.Module):
         return xhat_list, hnext_list, z_prior_list, zx_t_list, qzx_t_list, pxz_t_list
 
 
-    def predict(self, data, mask, nt, av_ch=None):
+    def predict(self, data, mask, nt, av_ch=None, task='prediction'):
         """
         Predict the reconstruction of some input.
         av_ch is the channels that we will be using for reconstruction. If its None, we just use all of them
@@ -519,8 +551,20 @@ class MCRNNVAE(nn.Module):
                 X_hat = [[] for _ in range(self.n_channels)]
                 for i in range(self.n_channels):
                     for tp in range(nt):
+                        # this is not adequate. We should always use the various channels to predict a single time point.
+                        if task=='prediction':
+                            xhat = pxz[i][tp][i].loc.cpu().detach()
+                        elif task=='recon':
+                            #select only longitudinal for tp > 0?
+                        #if tp > 0:
+                        #    xhat = torch.stack([pxz[ch][tp][i].loc.cpu().detach() for ch in av_ch if self.ch_type[ch] == 'long']).mean(0)
+                        #else:
+                            xhat = torch.stack([pxz[ch][tp][i].loc.cpu().detach() for ch in av_ch]).mean(0)
+                        #else:
+                        #    print('wrong!')
+                        #    xhat = [None]
                         # curr_channels = [i for i, x_ch in enumerate(data) if tp < x_ch.shape[0]]
-                        xhat = torch.stack([pxz[ch][tp][i].loc.cpu().detach() for ch in av_ch]).mean(0)
+                        # 
                         X_hat[i].append(xhat.numpy())
                     X_hat[i] = np.asarray(X_hat[i]) #Convert to np array
 
@@ -537,10 +581,6 @@ class MCRNNVAE(nn.Module):
         
         raise RuntimeError('Model needs to be fit')
 
-
-
-        # The channels that are not available
-
     def step(self, xt_list, ht_list, curr_channels, av_ch=None):
         """
         Function that implements the forward pass 
@@ -550,6 +590,8 @@ class MCRNNVAE(nn.Module):
         ht_list is a list for all the available channels, of the hidden states
         xt_lsit is the list of data, one per time channel
         curr_channels, ht_list and xt_list should have the same length
+
+        Also, depending on the number of epochs, 
         """
         av_ch = curr_channels if av_ch is None else av_ch
         hnext_list = []
@@ -566,7 +608,8 @@ class MCRNNVAE(nn.Module):
             ch = curr_channels[i]
             ht = ht_list[i]
             z_prior = self.ch_priors[ch](ht[-1]) # get the prior from the hidden state
-            
+            if self.curr_epoch < self.reduced_training:
+                z_prior.scale *= 0.1
             #If we are not sampling from the prior, we have an input value
             xt = xt_list[i]
             if self.phi_layers: x_phi = self.ch_phi_x[ch](xt) # Input transformation
@@ -577,6 +620,8 @@ class MCRNNVAE(nn.Module):
             else:
                 x = x_phi
             qzx_t = self.ch_enc[ch](x)
+            if self.curr_epoch < self.reduced_training:
+                qzx_t.scale *= 0.1
             z_t = self.sample_from(qzx_t) #Sample from q(z|x)
             qzx_t_list.append(qzx_t)
 
@@ -595,13 +640,17 @@ class MCRNNVAE(nn.Module):
             for j in range(self.n_channels):
                 #If the channel decoder is from baseline, we use only phi_zx_t, if not, add ht
                 # if its not longitudinal, do not use ht
+                if self.phi_layers: phi_zx_t_ch = self.ch_phi_z[j](z_t)
+                else: phi_zx_t_ch = z_t
+
                 if self.ch_type[j] == "long":
-                    z = torch.cat([phi_zx_t, ht[-1]], 1)
+                    z = torch.cat([phi_zx_t_ch, ht[-1]], 1)
                     # z = phi_zx_t
                 else:
-                    z = phi_zx_t
-
+                    z = phi_zx_t_ch
                 pxz_t = self.ch_dec[j](z)  # Decode from each different channel
+                if self.curr_epoch < self.reduced_training:
+                    pxz_t.scale *= 0.1
                 pxz_t_list[i].append(pxz_t)
 
             #append prior and sample
@@ -706,6 +755,7 @@ class MCRNNVAE(nn.Module):
 
         for epoch in range(self.epochs):
 
+            self.curr_epoch = epoch
             ## TRAINING
             self.train()  # Inherited method which sets self.training = True
             if type(data_train) is torch.utils.data.DataLoader:
@@ -823,12 +873,12 @@ class MCRNNVAE(nn.Module):
                 #the second distribution is not the normal, is the prior!!
                 # TEST it directly
                 if t == 0 and self.dropout:
-                    kl_base = KL_log_uniform(qzx[ch][t]).sum(1)
+                    kl_base = KL_log_uniform(qzx[ch][t]).mean(1)
                 else:
-                    kl_base = self.KL_fn(qzx[ch][t], zp[ch][t]).sum(1)
+                    kl_base = self.KL_fn(qzx[ch][t], zp[ch][t]).mean(1)
                 # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
                 if not torch.sum(mask_i[i]) == 0:
-                    kl_base = kl_base * ntp_subj_list[ch] # apply the cross-subject mean
+                    #kl_base = kl_base * ntp_subj_list[ch] # apply the cross-subject mean
                     kl_masked = torch.masked_select(kl_base, mask_i[i]) # apply the timepoint mask
                     kl += kl_masked.mean(0)
 
@@ -840,11 +890,11 @@ class MCRNNVAE(nn.Module):
                     # compute the combined mask for both inputs
                     combined_mask = torch.logical_and(mask_i[i], mask_i[j])
                     #Compute the combined value for the mean between both (its the maximum)
-                    subj_mean = torch.max(ntp_subj_list[ch], ntp_subj_list[ch2])
+                    #subj_mean = torch.max(ntp_subj_list[ch], ntp_subj_list[ch2])
                     
                     # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
                     if not torch.sum(combined_mask) == 0:
-                        ll_base = ll_base*subj_mean
+                        #ll_base = ll_base*subj_mean
                         ll_masked = torch.masked_select(ll_base, combined_mask)
                         ll += ll_masked.mean(0)
             t += 1
@@ -852,76 +902,6 @@ class MCRNNVAE(nn.Module):
         total = kl - ll
 
         losses = {
-            'total': total,
-            'kl': kl,
-            'll': ll
-        }
-
-        if self.training:
-            self.loss = self.save_loss(losses, self.loss)
-            return total
-        else:
-            return losses
-
-
-
-
-
-
-    def loss_function_old(self, fwd_return, mask=None):
-        """
-        Full loss function, as described in the paper.
-
-        This is a multi-channel loss: we compute all the losses
-        across the different channels.
-
-        The mask should have the same shape as x
-        """
-        X = fwd_return['x']
-        qzx = fwd_return['qzx']
-        pxz = fwd_return['pxz']
-        zp = fwd_return['zp']
-        kl = 0
-        ll = 0
-
-        curr_channels = list(range(self.n_channels))
-        t = 0
-        #Mentre hi hagi canals uqe encara tinguin tps
-        while len(curr_channels) > 0:
-            #Select only channels that have that tp in their data
-            curr_channels = [i for i, x_ch in enumerate(X) if t < x_ch.shape[0]]
-            x = [x_ch[t, :, :] for i, x_ch in enumerate(X) if i in curr_channels]
-            mask_i = [mask_ch[t, :, 0] for i, mask_ch in enumerate(mask) if i in curr_channels]
-            for i in range(len(curr_channels)):
-                ch = curr_channels[i]
-                # KL divergence
-                #the second distribution is not the normal, is the prior!!
-                # TEST it directly
-                if t == 0 and self.dropout:
-                    kl_base = KL_log_uniform(qzx[ch][t]).sum(1)
-                else:
-                    kl_base = self.KL_fn(qzx[ch][t], zp[ch][t]).sum(1)
-                # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
-                if not torch.sum(mask_i[i]) == 0:
-                    kl_masked = torch.masked_select(kl_base, mask_i[i])
-                    kl += kl_masked.mean(0)
-
-                for j in range(len(curr_channels)):
-                    ch2 = curr_channels[j]
-                    # i = latent comp; j = decoder
-                    # Direct (i=j) and Crossed (i!=j) Log-Likelihood
-                    ll_base = pxz[ch][t][ch2].log_prob(x[j]).sum(1)
-                    # compute the combined mask for both inputs
-                    combined_mask = torch.logical_and(mask_i[i], mask_i[j]) 
-                    # if the mask evaluates to zero, it means that, for this time point, this channel doesnt exist. Ignore it.
-                    if not torch.sum(combined_mask) == 0:
-                        ll_masked = torch.masked_select(ll_base, combined_mask)
-                        ll += ll_masked.mean(0)
-            t += 1
-
-        total = kl - ll
-
-        losses = {      
             'total': total,
             'kl': kl,
             'll': ll

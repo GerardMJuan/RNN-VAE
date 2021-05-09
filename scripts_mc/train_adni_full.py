@@ -9,9 +9,10 @@ import torch
 from torch import nn
 import numpy as np
 from sklearn.metrics import mean_absolute_error
-from rnnvae import rnnvae_h
+from rnnvae import rnnvae
 from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
+from rnnvae.eval import eval_reconstruction, eval_prediction
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import seaborn as sns
 
@@ -28,8 +29,8 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         os.makedirs(out_dir)
 
     #Seed
-    torch.manual_seed(p["seed"])
-    np.random.seed(p["seed"])
+    #torch.manual_seed(p["seed"])
+    #np.random.seed(p["seed"])
 
     #Redirect output to the out dir
     # sys.stdout = open(out_dir + 'output.out', 'w')
@@ -48,16 +49,40 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     # LOAD DATA
     #Start by not using validation data
     # this is a list of values
-    X_train, _, Y_train, _, mri_col = load_multimodal_data(csv_path, data_cols, p["ch_type"], train_set=0.9, normalize=True, return_covariates=True)
+    X_train, X_test, Y_train, Y_test, mri_col = load_multimodal_data(csv_path, data_cols, p["ch_type"], train_set=0.95, normalize=True, return_covariates=True)
 
     p["n_feats"] = [x[0].shape[1] for x in X_train]
+
+    loss = {}
 
     X_train_list = []
     mask_train_list = []
 
+    X_test_list = []
+    mask_test_list = []
 
     print('Length of train/test')
     print(len(X_train[0]))
+    print(len(X_test[0]))
+
+    print('Length of train/test')
+    print(len(X_train[0]))
+
+    # need to deal with ntp here
+    ntp = max(np.max([[len(xi) for xi in x] for x in X_train]), np.max([[len(xi) for xi in x] for x in X_train]))
+
+    if p["long_to_bl"]:
+        # HERE, change bl to long and repeat the values at t0 for ntp
+        for i in range(len(p["ch_type"])):
+            if p["ch_type"][i] == 'bl':
+                for j in range(len(X_train[i])):
+                    X_train[i][j] = np.array([X_train[i][j][0]]*ntp) 
+
+                for j in range(len(X_test[i])):
+                    X_test[i][j] = np.array([X_test[i][j][0]]*ntp) 
+
+                # p["ch_type"][i] = 'long'
+
 
     #For each channel, pad, create the mask, and append
     for x_ch in X_train:
@@ -68,13 +93,19 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
         X_train_pad[torch.isnan(X_train_pad)] = 0
         X_train_list.append(X_train_pad.to(DEVICE))
 
-    ntp = max(max([x.shape[0] for x in X_train_list]), max([x.shape[0] for x in X_train_list]))
+    for x_ch in X_test:
+        X_test_tensor = [ torch.FloatTensor(t) for t in x_ch]
+        X_test_pad = nn.utils.rnn.pad_sequence(X_test_tensor, batch_first=False, padding_value=np.nan)
+        mask_test = ~torch.isnan(X_test_pad)
+        mask_test_list.append(mask_test.to(DEVICE))
+        X_test_pad[torch.isnan(X_test_pad)] = 0
+        X_test_list.append(X_test_pad.to(DEVICE))
 
-    model = rnnvae_h.MCRNNVAE(p["h_size"], p["hidden"], p["n_layers"], 
-                            p["hidden"], p["n_layers"], p["hidden"],
-                            p["n_layers"], p["z_dim"], p["hidden"], p["n_layers"],
+    model = rnnvae.MCRNNVAE(p["h_size"], p["phi_x_hidden"], p["phi_x_n_layers"], 
+                            p["phi_z_hidden"], p["phi_z_n_layers"], p["enc_hidden"],
+                            p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
                             p["clip"], p["n_epochs"], p["batch_size"], 
-                            p["n_channels"], p["ch_type"], p["n_feats"], DEVICE, print_every=100, 
+                            p["n_channels"], p["ch_type"], p["n_feats"], p["c_z"], DEVICE, print_every=100, 
                             phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
                             dropout=p["dropout"], dropout_threshold=p["drop_th"])
 
@@ -85,7 +116,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
     model = model.to(DEVICE)
     # Fit the model
-    model.fit(X_train_list, X_train_list, mask_train_list, mask_train_list)
+    model.fit(X_train_list, X_test_list, mask_train_list, mask_test_list)
 
     #fit the model after changing the lr
     #optimizer = torch.optim.Adam(model.parameters(), lr=p["learning_rate"]*.1)
@@ -101,6 +132,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
     # Predict the reconstructions from X_val and X_train
     X_train_fwd = model.predict(X_train_list, mask_train_list, nt=ntp)
+    X_test_fwd = model.predict(X_test_list, mask_test_list, nt=ntp)
 
     # Unpad using the masks
     #plot validation and 
@@ -112,38 +144,71 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     #General mse and reconstruction over 
     # test_loss = model.recon_loss(X_test_fwd, target=X_test_pad, mask=mask_test_tensor)
     train_loss = model.recon_loss(X_train_fwd, target=X_train_list, mask=mask_train_list)
+    test_loss = model.recon_loss(X_test_fwd, target=X_test_list, mask=mask_test_list)
 
     print('MSE over the train set: ' + str(train_loss["mae"]))
     print('Reconstruction loss over the train set: ' + str(train_loss["rec_loss"]))
 
+    print('MSE over the test set: ' + str(test_loss["mae"]))
+    print('Reconstruction loss the train set: ' + str(test_loss["rec_loss"]))
 
-    loss = {
-        "mae_train" : train_loss["mae"],
-        "rec_train" : train_loss["rec_loss"],
-        "loss_total": model.loss['total'][-1],
-        "loss_kl": model.loss['kl'][-1],
-        "loss_ll": model.loss['ll'][-1],
-    }
+    ######################
+    ## Prediction of last time point
+    ######################
+    i = 0
+    # Test data without last timepoint
+    # X_test_tensors do have the last timepoint
+    pred_ch = list(range(3))
+    print(pred_ch)
+    t_pred = 1
+    res = eval_prediction(model, X_test, t_pred, pred_ch, DEVICE)
 
-    if p["dropout"]:
-        loss["dropout_comps"] = model.dropout_comp
+    for (i,ch) in enumerate([x for (i,x) in enumerate(p["ch_names"]) if i in pred_ch]):
+        loss[f'pred_{ch}_mae'] = res
 
-    print(loss)
+    ############################
+    ## Test reconstruction for each channel, using the other one 
+    ############################
+    # For each channel
+    if p["n_channels"] > 1:
+        for i in range(len(X_test)):
+            curr_name = p["ch_names"][i]
+            av_ch = list(range(len(X_test)))
+            av_ch.remove(i)
+            mae_rec = eval_reconstruction(model, X_test, X_test_list, mask_test_list, av_ch, i)
+            # Get MAE result for that specific channel over all timepoints
+            loss[f"recon_{curr_name}_mae"]= mae_rec
 
+    # Save results in the loss object
+    loss["mae_train"] = train_loss["mae"]
+    loss["rec_train"] = train_loss["rec_loss"]
+    loss["mae_test"] = train_loss["mae"]
+    loss["loss_total"] = model.loss['total'][-1]
+    loss["loss_total_val"] = model.val_loss['total'][-1]
+    loss["loss_kl"] = model.loss['kl'][-1]
+    loss["loss_ll"] = model.loss['ll'][-1]
+    
     return loss
+
 
 if __name__ == "__main__":
 
     channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
     names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
     ch_type = ["long", "long", "long", "bl", 'bl']
-
+    constrain = [None, None, 5, 5, 5]
     params = {
-        "h_size": 300,
-        "z_dim": 20,
-        "hidden": 300,
-        "n_layers": 1,
-        "n_epochs": 1500,
+        "h_size": 50,
+        "z_dim": 30,
+        "phi_x_hidden": 300, # CURRENTLY UNUSED
+        "phi_x_n_layers": 1,
+        "phi_z_hidden": 20,
+        "phi_z_n_layers": 1,
+        "enc_hidden": 120, # CURRENTLY UNUSED
+        "enc_n_layers": 1,
+        "dec_hidden": 120, # CURRENTLY UNUSED
+        "dec_n_layers": 1,
+        "n_epochs": 3000,
         "clip": 10,
         "learning_rate": 1e-3,
         "batch_size": 128,
@@ -151,12 +216,14 @@ if __name__ == "__main__":
         "n_channels": len(channels),
         "ch_names" : names,
         "ch_type": ch_type,
+        "c_z": constrain,
         "phi_layers": True,
         "sig_mean": False,
-        "dropout": False,
-        "drop_th": 0.3
+        "dropout": True,
+        "drop_th": 0.4,
+        "long_to_bl": True
     }
 
-    out_dir = "experiments_mc_models/allch_fulltrain1500/"
+    out_dir = "/homedtic/gmarti/EXPERIMENTS/RNNVAE/FULLNetwork/test/"
     csv_path = "data/multimodal_no_petfluid_train.csv"
     loss = run_experiment(params, csv_path, out_dir, channels)

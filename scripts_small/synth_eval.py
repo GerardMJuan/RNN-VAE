@@ -1,6 +1,9 @@
 """
-Script to evaluate a specific model performance of a test set
+Script to evaluate things of synthetic data
+
+Plot latent space, compare latent space, compare reconstruction...
 """
+
 
 import sys
 import os
@@ -10,24 +13,22 @@ from torch import nn
 import numpy as np
 from sklearn.metrics import mean_absolute_error
 from rnnvae import rnnvae_s
-from rnnvae.utils import load_multimodal_data
 from rnnvae.plot import plot_losses, plot_trajectory, plot_total_loss, plot_z_time_2d, plot_latent_space
 from rnnvae.eval import eval_reconstruction, eval_prediction
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from rnnvae.utils import pickle_load
 
-def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_file=False):
+def run_eval(out_dir, data_cols, dropout_threshold_test, output_to_file=False):
     """
     Main function to evaluate a model.
 
     Evaluate a trained model
     out_dir: directory where the model is and the results will be stored.
-    test_csv: where the csv with the test data is stored.
     data_cols: name of channels.
     dropout_threshold_test: threshold of the dropout
-    use_synth: use synthetic data
     """
 
     ch_bl = [] ##STORE THE CHANNELS THAT WE CONVERT TO LONG BUT WERE BL
@@ -39,8 +40,6 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
     #load parameters
     p = eval(open(out_dir + "params.txt").read())
 
-    long_to_bl = p["long_to_bl"] #variable to decide if we have transformed the long to bl or not.
-
     # DEVICE
     ## Decidint on device on device.
     DEVICE_ID = 0
@@ -48,29 +47,15 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
     if torch.cuda.is_available():
         torch.cuda.set_device(DEVICE_ID)
 
-    X_test, _, Y_test, _, col_lists = load_multimodal_data(test_csv, data_cols, p["ch_type"], train_set=1.0, normalize=True, return_covariates=True)
-    p["n_feats"] = [x[0].shape[1] for x in X_test]
-
-    # need to deal with ntp here
-    ntp = max(np.max([[len(xi) for xi in x] for x in X_test]), np.max([[len(xi) for xi in x] for x in X_test]))
-
-    if long_to_bl: 
-        # Process MASK WITHOUT THE REPETITION OF BASELINE
-        # HERE, change bl to long and repeat the values at t0 for ntp
-        for i in range(len(p["ch_type"])):
-            if p["ch_type"][i] == 'bl':
-
-                for j in range(len(X_test[i])):
-                    X_test[i][j] = np.array([X_test[i][j][0]]*ntp) 
-
-                # p["ch_type"][i] = 'long'
-                ch_bl.append(i)
+    #Load data
+    Z_test = pickle_load(out_dir + f"ztest")
+    X_test = pickle_load(out_dir + f"xtest")
 
     X_test_list = []
     mask_test_list = []
 
     # Process test set
-    for x_ch in X_test:
+    for x_ch in X_test[:p["n_channels"]]:
         X_test_tensor = [ torch.FloatTensor(t) for t in x_ch]
         X_test_pad = nn.utils.rnn.pad_sequence(X_test_tensor, batch_first=False, padding_value=np.nan)
         mask_test = ~torch.isnan(X_test_pad)
@@ -78,12 +63,21 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
         X_test_pad[torch.isnan(X_test_pad)] = 0
         X_test_list.append(X_test_pad.to(DEVICE))
 
+    p["n_feats"] = [p["n_feats"] for _ in range(p["n_channels"])]
+
+    X_test = X_test[:p["n_channels"]]
+
+    # Prepare model
+    # Define model and optimizer
     model = rnnvae_s.MCRNNVAE(p["h_size"], p["enc_hidden"],
                             p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
                             p["clip"], p["n_epochs"], p["batch_size"], 
                             p["n_channels"], p["ch_type"], p["n_feats"], p["c_z"], DEVICE, print_every=100, 
                             phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
                             dropout=p["dropout"], dropout_threshold=p["drop_th"])
+    
+    model.ch_name = p["ch_names"]
+
 
     model = model.to(DEVICE)
     model.load(out_dir+'model.pt')
@@ -96,21 +90,9 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
     ####################################
 
     ##TEST
-    X_test_fwd = model.predict(X_test_list, mask_test_list, nt=ntp)
+    X_test_fwd = model.predict(X_test_list, mask_test_list, nt=p["ntp"])
 
     # Test the reconstruction and prediction
-
-    ######################
-    ## Prediction of last time point
-    ######################
-    # Test data without last timepoint
-    # X_test_tensors do have the last timepoint
-    pred_ch = list(range(3))
-    t_pred = 1
-    res = eval_prediction(model, X_test, t_pred, pred_ch, DEVICE)
-
-    for (i,ch) in enumerate([x for (i,x) in enumerate(p["ch_names"]) if i in pred_ch]):
-        print(f'pred_{ch}_mae: {res[i]}')
 
     ############################
     ## Test reconstruction for each channel, using the other one 
@@ -163,83 +145,35 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
     #NEED TO ADAPT THIS FUNCTION
     qzx_test = [np.array(x) for x in X_test_fwd['qzx']]
 
-    # IF WE DO THAT TRANSFORMATION
-    if long_to_bl:
-        for i in ch_bl:
-            qzx_test[i] = np.array([qzx if j == 0 else None for j, qzx in enumerate(qzx_test[i])])
-
-    # Now plot color by timepoint
-    out_dir_sample = out_dir + 'zcomp_ch_age/'
-    if not os.path.exists(out_dir_sample):
-        os.makedirs(out_dir_sample)
-
-    #Binarize the ages and 
-    age_full = [x for elem in Y_test["AGE_demog"] for x in elem]
-    bins, retstep = np.linspace(min(age_full), max(age_full), 8, retstep=True)
-    age_digitized = [np.digitize(y, bins) for y in Y_test["AGE_demog"]]
-
-    classif_test = [[bins[x-1] for (i, x) in enumerate(elem)] for elem in age_digitized]
-
-    pallete = sns.color_palette("viridis", 8)
-    pallete_dict = {bins[i]:value for (i, value) in enumerate(pallete)}
-
     ####IF DROPOUT, SELECT ONLY COMPS WITH DROPOUT > TAL
     if model.dropout:
         kept_comp = model.kept_components
     else:
         kept_comp = None
 
-    print(kept_comp)
-    plot_latent_space(model, qzx_test, ntp, classificator=classif_test, pallete_dict=pallete_dict, plt_tp='all',
-                    all_plots=True, uncertainty=False, comp=kept_comp, savefig=True, out_dir=out_dir_sample + '_test', mask=mask_test_list)
-
-    #Convert to standard
-    #Add padding so that the mask also works here
-    DX_test = [[x for x in elem] for elem in Y_test["DX"]]
-
-    #Define colors
-    pallete_dict = {
-        "CN": "#2a9e1e",
-        "MCI": "#bfbc1a",
-        "AD": "#af1f1f"
-    }
-    # Get classificator labels, for n time points
-    out_dir_sample = out_dir + 'zcomp_ch_dx/'
-    if not os.path.exists(out_dir_sample):
-        os.makedirs(out_dir_sample)
-
-    plot_latent_space(model, qzx_test, ntp, classificator=DX_test, pallete_dict=pallete_dict, plt_tp='all',
-                all_plots=True, uncertainty=False, comp=kept_comp, savefig=True, out_dir=out_dir_sample + '_test', mask=mask_test_list)
-
-    out_dir_sample_t0 = out_dir + 'zcomp_ch_dx_t0/'
-    if not os.path.exists(out_dir_sample_t0):
-        os.makedirs(out_dir_sample_t0)
-
-    plot_latent_space(model, qzx_test, ntp, classificator=DX_test, pallete_dict=pallete_dict, plt_tp=[0],
-                    all_plots=True, uncertainty=False, comp=kept_comp, savefig=True, out_dir=out_dir_sample_t0 + '_test', mask=mask_test_list)
-
     # Now plot color by timepoint
     out_dir_sample = out_dir + 'zcomp_ch_tp/'
     if not os.path.exists(out_dir_sample):
         os.makedirs(out_dir_sample)
 
-    classif_test = [[i for (i, x) in enumerate(elem)] for elem in Y_test["DX"]]
-
-    pallete = sns.color_palette("viridis", ntp)
+    pallete = sns.color_palette("viridis", p["ntp"])
     pallete_dict = {i:value for (i, value) in enumerate(pallete)}
 
-    plot_latent_space(model, qzx_test, ntp, classificator=classif_test, pallete_dict=pallete_dict, plt_tp='all',
-                    all_plots=True, uncertainty=False, comp=kept_comp, savefig=True, out_dir=out_dir_sample + '_test', mask=mask_test_list)
+    #plot_latent_space(model, qzx_test, p["ntp"], plt_tp='all',
+    #                all_plots=True, uncertainty=False, comp=kept_comp, savefig=True, out_dir=out_dir_sample + '_test', mask=mask_test_list)
+
+    # TODO plot per subject
+    # TODO plot correlation between Z_true and Z_hat, and show the results
 
 ## MAIN
 ## here we put the parameters when we directly run the script
 if __name__ == "__main__":
-    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metatest_SMALL/_h_30_z_30_cz_5/"
-    #out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/no_phi_x/test_sameparams/"
-    test_csv = "/homedtic/gmarti/CODE/RNN-VAE/data/multimodal_no_petfluid_test.csv"
-    data_cols = ['_mri_vol','_mri_cort', '_cog']#, '_demog', '_apoe']
+    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metaexp_synth/"
+    data_cols = ["c1","c2"]
     dropout_threshold_test = 0.2
 
-    run_eval(out_dir, test_csv, data_cols, dropout_threshold_test)
+    run_eval(out_dir, data_cols, dropout_threshold_test)
+
+
 
 

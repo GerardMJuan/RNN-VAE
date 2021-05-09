@@ -38,7 +38,7 @@ def prepare_brainpainter_data(in_csv_train, suffix, synth_data, out_dir, name_fi
     norm_val = pickle.load( open(f"data/norm_values/brainpainter_norm.pkl", 'rb'))
     mean_cn = norm_val["mean"]
     std_cn = norm_val["std"]
-    import pdb; pdb.set_trace()
+
     # we compute mean of ad and mean of cn to discover the sign of the trajectory
     # for each biomarker (which should always be negative but i dont know anymore)
 

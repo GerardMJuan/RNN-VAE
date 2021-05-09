@@ -4,6 +4,7 @@ source /etc/profile.d/easybuild.sh
 # source activate dlnn38
 
 #source activate /homedtic/gmarti/ENV/dl38
+module load R
 module load Python
 module load CUDA/10.2.89
 module load cuDNN/7.6.5.32-CUDA-10.2.89

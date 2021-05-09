@@ -16,7 +16,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-def run_experiment(p, csv_path, out_dir, data_cols=[]):
+def run_experiment(p, csv_path, out_dir, data_cols=[], output_to_file=False):
     """
     Function to run the experiments.
     p contain all the hyperparameters needed to run the experiments
@@ -33,7 +33,8 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     np.random.seed(p["seed"])
 
     #Redirect output to the out dir
-    # sys.stdout = open(out_dir + 'output.out', 'w')
+    if output_to_file:
+        sys.stdout = open(out_dir + 'output.out', 'w')
 
     #save parameters to the out dir 
     with open(out_dir + "params.txt","w") as f:
@@ -148,20 +149,12 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
     plt.savefig(out_dir + "kl_individual_loss" + '.png')
     plt.close()
 
-
-
     #Compute mse and reconstruction loss
     #General mse and reconstruction over 
     # test_loss = model.recon_loss(X_test_fwd, target=X_test_pad, mask=mask_test_tensor)
-    train_loss = model.recon_loss(X_train_fwd, target=X_train_list, mask=mask_train_list)
-
-    print('MSE over the train set: ' + str(train_loss["mae"]))
-    print('Reconstruction loss over the train set: ' + str(train_loss["rec_loss"]))
-
+    # train_loss = model.recon_loss(X_train_fwd, target=X_train_list, mask=mask_train_list)
 
     loss = {
-        "mae_train" : train_loss["mae"],
-        "rec_train" : train_loss["rec_loss"],
         "loss_total": model.loss['total'][-1],
         "loss_kl": model.loss['kl'][-1],
         "loss_ll": model.loss['ll'][-1],
@@ -176,22 +169,21 @@ def run_experiment(p, csv_path, out_dir, data_cols=[]):
 
 if __name__ == "__main__":
 
-
-    channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
-    names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
-    ch_type = ["long", "long", "long", "bl", 'bl']
-    constrain = [None, None, 5, 5, 5]
+    channels = ['_mri_vol','_mri_cort', '_cog']#, '_apoe']#, '_demog', '_apoe']
+    names = ["MRI vol", "MRI cort", "Cog"]#, 'APOE']#, "Demog", 'APOE']
+    ch_type = ["long", "long", "long"]#, 'bl']#, "bl", 'bl']
+    constrain = [None, None, 5]#, 2]#, 5, 5]
 
     params = {
-        "h_size": 10,
+        "h_size": 50,
         "z_dim": 30,
         "enc_hidden": 120,
         "enc_n_layers": 0,
         "dec_hidden": 120,
         "dec_n_layers": 0,
-        "n_epochs": 2000,
+        "n_epochs": 4000,
         "clip": 10,
-        "learning_rate": 1e-3,
+        "learning_rate": 2e-3,
         "batch_size": 128,
         "seed": 1714,
         "n_channels": len(channels),
@@ -205,7 +197,7 @@ if __name__ == "__main__":
         "long_to_bl": True
     }
 
-    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/no_phi_x/testing_kl/"
+    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/SMALLNetwork_10/"
     #out_dir = "/homedtic/gmarti/EXPERIMENTS/RNN-VAE/experiments_postthesis/_h_10_x_10_z_30_cz_5/"
     csv_path = "data/multimodal_no_petfluid_train.csv"
     loss = run_experiment(params, csv_path, out_dir, channels)
