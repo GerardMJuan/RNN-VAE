@@ -66,7 +66,7 @@ class LatentTemporalGenerator():
         #Make the direction smaller such that the movement is contained
         z_v = np.random.randn(self.lat_dim, nsamples) * 0.1 
         if self.sign_list is not None:
-            z_v = np.abs(z_v) * np.array(self.sign_list).repeat([nsamples], axis=0)
+            z_v = np.abs(z_v) * np.array(self.sign_list)[:, np.newaxis].repeat(nsamples, axis=1)
 
         # Create temporal timepoints
         #timepoint will be in axis 0

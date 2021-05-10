@@ -13,12 +13,12 @@ import time
 from datetime import timedelta
 import pandas as pd
 
-names = ["c1","c2"]
-ch_type = ["long", "long"]
+names = ["c1","c2", "c3"]
+ch_type = ["long", "long", "long"]
 
 params_grid = {
     "h_size": [20, 50, 100],
-    "z_dim": [2, 5, 10],
+    "z_dim": [5, 10, 30],
     "enc_hidden": [120],
     "enc_n_layers": [0],
     "dec_hidden": [120],
@@ -31,7 +31,7 @@ params_grid = {
     "ntp": [10],
     "noise": [1e-3],
     "nsamples": [800],
-    "n_channels": [2],
+    "n_channels": [3],
     "n_feats": [20],
     "lat_dim": [5],
     "c_z": [[None, None, None]],
@@ -40,7 +40,7 @@ params_grid = {
     "phi_layers": [True],
     "sig_mean": [False],
     "dropout": [True],
-    "drop_th": [0.2],
+    "drop_th": [1.0],
 }
 
 #Create two lists, that will store the dictionaries of the loss that later will become a dataframe
@@ -59,7 +59,7 @@ for p in ParameterGrid(params_grid):
     out_dir = f"{base_out_dir}_h_{h_size}_z_{z_dim}/"
     print("Running: " + out_dir)
     t = time.time()
-    loss = run_experiment(p, out_dir, gen_data=True, data_suffix='_5', output_to_file=False)
+    loss = run_experiment(p, out_dir, gen_data=True, data_suffix='_5', output_to_file=True)
 
     elapsed = time.time() - t
     print('Time to run: %s' % str(timedelta(seconds=elapsed)))
@@ -75,8 +75,8 @@ for p in ParameterGrid(params_grid):
     list_loss.append(loss)
 
     # Evaluate the results
-    dropout=0.2
-    run_eval(out_dir, names, dropout, output_to_file=False)
+    dropout=1.0
+    run_eval(out_dir, names, dropout, output_to_file=True)
 
 #Convert lists to dataframes
 df_loss = pd.DataFrame(list_loss)

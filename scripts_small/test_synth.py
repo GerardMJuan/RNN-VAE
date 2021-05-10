@@ -128,7 +128,7 @@ def run_experiment(p, out_dir, gen_data=True, data_suffix=None, output_to_file=F
     model.save(out_dir, 'model.pt')
 
     # Predict the reconstructions from X_val and X_train
-    X_train_fwd = model.predict(X_test_list, mask_test_list, nt=p["ntp"])
+    X_test_list = model.predict(X_test_list, mask_test_list, nt=p["ntp"])
     X_train_fwd = model.predict(X_train_list, mask_train_list, nt=p["ntp"])
 
     # Unpad using the masks
@@ -217,5 +217,5 @@ if __name__ == "__main__":
     }
 
     out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/synth_testing/"
-    loss = run_experiment(params, out_dir, True, "_5")
+    loss = run_experiment(params, out_dir, True, "_5", True)
     print(loss)

@@ -168,9 +168,9 @@ def run_eval(out_dir, data_cols, dropout_threshold_test, output_to_file=False):
 ## MAIN
 ## here we put the parameters when we directly run the script
 if __name__ == "__main__":
-    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metaexp_synth/"
+    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metaexp_synth/_h_100_z_10/"
     data_cols = ["c1","c2"]
-    dropout_threshold_test = 0.2
+    dropout_threshold_test = 1.0
 
     run_eval(out_dir, data_cols, dropout_threshold_test)
 
