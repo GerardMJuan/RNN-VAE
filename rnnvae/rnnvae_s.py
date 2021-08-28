@@ -170,7 +170,7 @@ class VariationalBlock(nn.Module):
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.var_layers.append(nn.Linear(self.input_size, self.hidden_size))
-            #self.var_layers.append(nn.ReLU())
+            self.var_layers.append(nn.ReLU())
             self.input_size = self.hidden_size
 
         if self.sigmoid_mean:
@@ -263,7 +263,7 @@ class DecoderCat(nn.Module):
         for _ in range(self.n_layers):
             # Here we coould add non-linearities if needed
             self.var_layers.append(nn.Linear(self.input_size, self.hidden_size))
-            #self.var_layers.append(nn.ReLU())
+            self.var_layers.append(nn.LeakyReLU())
             self.input_size = self.hidden_size
 
         self.output = nn.Linear(self.input_size, self.n_cat)
@@ -386,10 +386,10 @@ class MCRNNVAE(nn.Module):
             self.ch_enc.append(VariationalBlock(self.enc_input, self.enc_hidden, self.latent, self.enc_n, sigmoid_mean=self.sigmoid_mean, log_alpha=self.log_alpha))
 
             ### DECODER
-            if ch == 3:
-                self.ch_dec.append(DecoderCat(self.dec_input, self.dec_hidden, 3, self.dec_n, c_z=self.c_z[ch]))
-            else:
-                self.ch_dec.append(VariationalBlock(self.dec_input, self.dec_hidden, self.n_feats[ch], self.dec_n, sigmoid_mean=self.sigmoid_mean, c_z=self.c_z[ch], decode=True))
+            #if ch == 3:
+            #    self.ch_dec.append(DecoderCat(self.dec_input, self.dec_hidden, 3, self.dec_n, c_z=self.c_z[ch]))
+            #else:
+            self.ch_dec.append(VariationalBlock(self.dec_input, self.dec_hidden, self.n_feats[ch], self.dec_n, sigmoid_mean=self.sigmoid_mean, c_z=self.c_z[ch], decode=True))
 
         #Init KL and loss
         self.optimizer = None
@@ -610,14 +610,14 @@ class MCRNNVAE(nn.Module):
                     for tp in range(nt):
                         # this is not adequate. We should always use the various channels to predict a single time point.
                         if task=='prediction':
-                            #xhat = MCRNNVAE.p_to_prediction(pxz[i][tp][i]).cpu().detach()
-                            xhat = torch.stack([pxz[ch][tp][i].loc.cpu().detach() for ch in av_ch]).mean(0)
+                            xhat = MCRNNVAE.p_to_prediction(pxz[i][tp][i]).cpu().detach()
+                            # xhat = torch.stack([pxz[ch][tp][i].loc.cpu().detach() for ch in av_ch]).mean(0)
 
                         elif task=='recon':
                             #select only longitudinal for tp > 0?
-                        #if tp > 0:
-                        #    xhat = torch.stack([pxz[ch][tp][i].loc.cpu().detach() for ch in av_ch if self.ch_type[ch] == 'long']).mean(0)
-                        #else:
+                            #if tp > 0:
+                            #    xhat = torch.stack([MCRNNVAE.p_to_prediction(pxz[ch][tp][i]).cpu().detach() for ch in av_ch if self.ch_type[ch] == 'long']).mean(0)
+                            #else:
                             xhat = torch.stack([MCRNNVAE.p_to_prediction(pxz[ch][tp][i]).cpu().detach() for ch in av_ch]).mean(0)
                         #else:
                         #    print('wrong!')

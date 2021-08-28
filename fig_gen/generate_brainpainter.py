@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import pickle
-from rnnvae import rnnvae_h
+from rnnvae import rnnvae_h, rnnvae_s
 import torch
 
 #IMPORT FROM THE TEST CONFIG WE WANT
@@ -57,12 +57,16 @@ def prepare_brainpainter_data(in_csv_train, suffix, synth_data, out_dir, name_fi
                                    index= [f"img{i}" for i in range(len(synth_data))], 
                                    columns=cols)
     df_brainpainter.index.name = "Image-name-unique"
+
     # save to disk
     df_brainpainter.to_csv(out_dir + f"{name_fig}.csv")
 
 if __name__ == "__main__":
     #paths
     out_dir = params.out_dir
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
     in_csv_train = params.in_csv_train
     in_csv_test = params.in_csv_test
     # out_dir = "/homedtic/gmarti/CODE/RNN-VAE/fig_gen/"
@@ -71,9 +75,9 @@ if __name__ == "__main__":
 
     # Load the data
     # load full dataset and load the training dataset
-    channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
-    names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
-    ch_type = ["long", "long", "long", "bl", 'bl']
+    channels = ['_mri_vol','_mri_cort', '_cog']#, '_demog', '_apoe']
+    names = ["MRI vol", "MRI cort", "Cog",]# "Demog", 'APOE']
+    ch_type = ["long", "long", "long"]#, "bl", 'bl']
     X_train, _, Y_train, _, cols = load_multimodal_data(in_csv_train, channels, ch_type, train_set=1.0, normalize=True, return_covariates=True)
     ## Load the test data
     X_test, _, Y_test, _, cols = load_multimodal_data(in_csv_test, channels, ch_type, train_set=1.0, normalize=True, return_covariates=True)
@@ -102,8 +106,7 @@ if __name__ == "__main__":
                                 phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
                                 dropout=p["dropout"], dropout_threshold=p["drop_th"])
     else:
-        model = rnnvae_h.MCRNNVAE(p["h_size"], p["x_hidden"], p["x_n_layers"], 
-                                p["z_hidden"], p["z_n_layers"], p["enc_hidden"],
+        model = rnnvae_s.MCRNNVAE(p["h_size"], p["enc_hidden"],
                                 p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
                                 p["clip"], p["n_epochs"], p["batch_size"], 
                                 p["n_channels"], p["ch_type"], p["n_feats"], p["c_z"], DEVICE, print_every=100, 
@@ -147,8 +150,7 @@ if __name__ == "__main__":
         ###### TESTING
         ##############
         col_type = params.col_type
-        
-        if ['_mri_vol','_mri_cort'] in col_type:
+        # if ['_mri_vol','_mri_cort'] in col_type:
             # save it to disk using the brainpainter function
-            prepare_brainpainter_data(in_csv_train, col_type, subj_to_plot, out_dir, f'subj{i}')
+        prepare_brainpainter_data(in_csv_train, col_type, subj_to_plot, out_dir, f'subj{i}')
         # Save the rest of values normally

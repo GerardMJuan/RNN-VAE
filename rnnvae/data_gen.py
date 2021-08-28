@@ -64,7 +64,7 @@ class LatentTemporalGenerator():
         # direction depends on self.sign_list if exist, if not, 
 
         #Make the direction smaller such that the movement is contained
-        z_v = np.random.randn(self.lat_dim, nsamples) * 0.1 
+        z_v = np.random.randn(self.lat_dim, nsamples) * 0.1
         if self.sign_list is not None:
             z_v = np.abs(z_v) * np.array(self.sign_list)[:, np.newaxis].repeat(nsamples, axis=1)
 
@@ -73,7 +73,6 @@ class LatentTemporalGenerator():
         
         z_temp = [z + z_v*tp for tp in range(self.ntp)]
         z_temp = np.stack(z_temp, axis=0)
-
         Y = []
         for ch in range(self.n_channels):
             Y_ch = []
@@ -82,7 +81,7 @@ class LatentTemporalGenerator():
             Y_ch = np.stack(Y_ch, axis=0)
 
             #apply noise
-            Y_ch = self.noise*np.random.normal(size=Y_ch.shape)
+            Y_ch = Y_ch + self.noise*np.random.normal(size=Y_ch.shape)
             
             # standarize
             if train:

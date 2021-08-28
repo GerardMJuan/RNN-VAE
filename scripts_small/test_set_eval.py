@@ -18,7 +18,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_file=False):
+def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, type='test', output_to_file=False):
     """
     Main function to evaluate a model.
 
@@ -32,14 +32,14 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
 
     ch_bl = [] ##STORE THE CHANNELS THAT WE CONVERT TO LONG BUT WERE BL
 
-    #Redirect output to the out dir
-    if output_to_file:
-        sys.stdout = open(out_dir + 'output.out', 'w')
-
     #load parameters
     p = eval(open(out_dir + "params.txt").read())
 
     long_to_bl = p["long_to_bl"] #variable to decide if we have transformed the long to bl or not.
+
+    #Seed
+    torch.manual_seed(p["seed"])
+    np.random.seed(p["seed"])
 
     # DEVICE
     ## Decidint on device on device.
@@ -48,7 +48,10 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
     if torch.cuda.is_available():
         torch.cuda.set_device(DEVICE_ID)
 
-    X_test, _, Y_test, _, col_lists = load_multimodal_data(test_csv, data_cols, p["ch_type"], train_set=1.0, normalize=True, return_covariates=True)
+    if type == 'val':
+        _, X_test, _, Y_test, col_lists = load_multimodal_data(test_csv, data_cols, p["ch_type"], train_set=0.8, normalize=True, return_covariates=True)
+    else:
+        X_test, _, Y_test, _, col_lists = load_multimodal_data(test_csv, data_cols, p["ch_type"], train_set=1.0, normalize=True, return_covariates=True)
     p["n_feats"] = [x[0].shape[1] for x in X_test]
 
     # need to deal with ntp here
@@ -78,8 +81,11 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
         X_test_pad[torch.isnan(X_test_pad)] = 0
         X_test_list.append(X_test_pad.to(DEVICE))
 
+    # HACK: USING enc_n_layers twice, to make sure that encoder and decoder use the same number of layers
+    #and to reduce redundant computations (as we are only working with )
+    #same with enc_hidden
     model = rnnvae_s.MCRNNVAE(p["h_size"], p["enc_hidden"],
-                            p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
+                            p["enc_n_layers"], p["z_dim"], p["enc_hidden"], p["enc_n_layers"],
                             p["clip"], p["n_epochs"], p["batch_size"], 
                             p["n_channels"], p["ch_type"], p["n_feats"], p["c_z"], DEVICE, print_every=100, 
                             phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
@@ -87,9 +93,22 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
 
     model = model.to(DEVICE)
     model.load(out_dir+'model.pt')
+
+    # NOTE: AFTER LOADING THE MODEL, IF WE ARE TESTING DIRECTLY,
+    # CHANGE THE OUT_DIR ADDING AN EXTRA DIRECTORY
+    if type=='test':
+        out_dir = out_dir + 'test-results/'
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
+    #Redirect output to the out dir
+    if output_to_file:
+        sys.stdout = open(out_dir + 'output.out', 'w')
+
     if p["dropout"]:
         print(model.dropout_comp)
         model.dropout_threshold = dropout_threshold_test
+
 
     ####################################
     # IF DROPOUT, CHECK THE COMPONENTS AND THRESHOLD AND CHANGE IT
@@ -110,13 +129,25 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
     res = eval_prediction(model, X_test, t_pred, pred_ch, DEVICE)
 
     for (i,ch) in enumerate([x for (i,x) in enumerate(p["ch_names"]) if i in pred_ch]):
-        print(f'pred_{ch}_mae: {res[i]}')
+        print(f'pred_{ch}_mae, 1tp: {res[i]}')
+
+    t_pred = 2
+    res = eval_prediction(model, X_test, t_pred, pred_ch, DEVICE)
+
+    for (i,ch) in enumerate([x for (i,x) in enumerate(p["ch_names"]) if i in pred_ch]):
+        print(f'pred_{ch}_mae, 2tp: {res[i]}')
+
+    t_pred = 3
+    res = eval_prediction(model, X_test, t_pred, pred_ch, DEVICE)
+
+    for (i,ch) in enumerate([x for (i,x) in enumerate(p["ch_names"]) if i in pred_ch]):
+        print(f'pred_{ch}_mae, 3tp: {res[i]}')
 
     ############################
     ## Test reconstruction for each channel, using the other one 
     ############################
     # For each channel
-    results = np.zeros((len(X_test), len(X_test))) #store the results, will save later
+    results = np.empty((len(X_test), len(X_test)), dtype=object) #store the results, will save later
 
     for i in range(len(X_test)):
         for j in range(len(X_test)):
@@ -129,18 +160,21 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
             print(f"recon_{curr_name}_from{to_recon}_mae: {mae_rec}")
 
     df_crossrec = pd.DataFrame(data=results, index=p["ch_names"], columns=p["ch_names"])
+    """
     plt.tight_layout()
     ax = sns.heatmap(df_crossrec, annot=True, fmt=".2f", vmin=0, vmax=1)
     plt.savefig(out_dir + "figure_crossrecon.png")
     plt.close()
+    """
     # SAVE AS FIGURE
+    df_crossrec = df_crossrec.round(decimals=2)
     df_crossrec.to_latex(out_dir+"table_crossrecon.tex")
 
     ############################
     ## Test reconstruction for each channel, using the rest
     ############################
     # For each channel
-    results = np.zeros((len(X_test), 1)) #store the results, will save later
+    results = np.empty((len(X_test), 1), dtype=object) #store the results, will save later
 
     for i in range(len(X_test)):
         av_ch = list(range(len(X_test))).remove(i)
@@ -153,7 +187,8 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
     df_totalrec = pd.DataFrame(data=results.T, columns=p["ch_names"])
 
     # SAVE AS FIGURE
-    df_totalrec.to_latex(out_dir+"table_totalrecon.tex")
+    df_totalrec_out = df_totalrec.round(decimals=2)
+    df_totalrec_out.to_latex(out_dir+"table_totalrecon.tex")
 
     ###############################################################
     # PLOTTING, FIRST GENERAL PLOTTING AND THEN SPECIFIC PLOTTING #
@@ -183,6 +218,7 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
     pallete = sns.color_palette("viridis", 8)
     pallete_dict = {bins[i]:value for (i, value) in enumerate(pallete)}
 
+    """
     ####IF DROPOUT, SELECT ONLY COMPS WITH DROPOUT > TAL
     if model.dropout:
         kept_comp = model.kept_components
@@ -230,16 +266,22 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, output_to_fil
 
     plot_latent_space(model, qzx_test, ntp, classificator=classif_test, pallete_dict=pallete_dict, plt_tp='all',
                     all_plots=True, uncertainty=False, comp=kept_comp, savefig=True, out_dir=out_dir_sample + '_test', mask=mask_test_list)
+    """
+
+    return df_totalrec
 
 ## MAIN
 ## here we put the parameters when we directly run the script
 if __name__ == "__main__":
-    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metatest_SMALL/_h_30_z_30_cz_5/"
-    #out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/no_phi_x/test_sameparams/"
-    test_csv = "/homedtic/gmarti/CODE/RNN-VAE/data/multimodal_no_petfluid_test.csv"
-    data_cols = ['_mri_vol','_mri_cort', '_cog']#, '_demog', '_apoe']
+
+    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/final_hyperparameter_search/_h_50_z_30_hid_50_n_0/"
+    data_cols = ['_mri_vol','_mri_cort', '_cog']
     dropout_threshold_test = 0.2
 
-    run_eval(out_dir, test_csv, data_cols, dropout_threshold_test)
+    #out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/supplementary_6/"
+    #out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/no_phi_x/test_sameparams/"
+    test_csv = "/homedtic/gmarti/CODE/RNN-VAE/data/multimodal_no_petfluid_test.csv"
+    #data_cols = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
+    #dropout_threshold_test = 0.2
 
-
+    run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, 'test', output_to_file=True)

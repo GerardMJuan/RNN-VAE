@@ -69,8 +69,11 @@ def run_eval(out_dir, data_cols, dropout_threshold_test, output_to_file=False):
 
     # Prepare model
     # Define model and optimizer
+    # HACK: USING enc_n_layers twice, to make sure that encoder and decoder use the same number of layers
+    #and to reduce redundant computations (as we are only working with )
+    #same with enc_hidden
     model = rnnvae_s.MCRNNVAE(p["h_size"], p["enc_hidden"],
-                            p["enc_n_layers"], p["z_dim"], p["dec_hidden"], p["dec_n_layers"],
+                            p["enc_n_layers"], p["z_dim"], p["enc_hidden"], p["enc_n_layers"],
                             p["clip"], p["n_epochs"], p["batch_size"], 
                             p["n_channels"], p["ch_type"], p["n_feats"], p["c_z"], DEVICE, print_every=100, 
                             phi_layers=p["phi_layers"], sigmoid_mean=p["sig_mean"],
@@ -98,7 +101,7 @@ def run_eval(out_dir, data_cols, dropout_threshold_test, output_to_file=False):
     ## Test reconstruction for each channel, using the other one 
     ############################
     # For each channel
-    results = np.zeros((len(X_test), len(X_test))) #store the results, will save later
+    results = np.empty((len(X_test), len(X_test)), dtype=object) #store the results, will save later
 
     for i in range(len(X_test)):
         for j in range(len(X_test)):
@@ -111,10 +114,12 @@ def run_eval(out_dir, data_cols, dropout_threshold_test, output_to_file=False):
             print(f"recon_{curr_name}_from{to_recon}_mae: {mae_rec}")
 
     df_crossrec = pd.DataFrame(data=results, index=p["ch_names"], columns=p["ch_names"])
+    """
     plt.tight_layout()
     ax = sns.heatmap(df_crossrec, annot=True, fmt=".2f", vmin=0, vmax=1)
     plt.savefig(out_dir + "figure_crossrecon.png")
     plt.close()
+    """
     # SAVE AS FIGURE
     df_crossrec.to_latex(out_dir+"table_crossrecon.tex")
 
@@ -122,7 +127,7 @@ def run_eval(out_dir, data_cols, dropout_threshold_test, output_to_file=False):
     ## Test reconstruction for each channel, using the rest
     ############################
     # For each channel
-    results = np.zeros((len(X_test), 1)) #store the results, will save later
+    results = np.empty((len(X_test), 1), dtype=object) #store the results, will save later
 
     for i in range(len(X_test)):
         av_ch = list(range(len(X_test))).remove(i)
@@ -165,12 +170,12 @@ def run_eval(out_dir, data_cols, dropout_threshold_test, output_to_file=False):
     # TODO plot per subject
     # TODO plot correlation between Z_true and Z_hat, and show the results
 
-## MAIN
+## MAINW
 ## here we put the parameters when we directly run the script
 if __name__ == "__main__":
-    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metaexp_synth/_h_100_z_10/"
-    data_cols = ["c1","c2"]
-    dropout_threshold_test = 1.0
+    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/final_hyperparameter_synth/_h_5_z_20/"
+    data_cols = ["c1","c2", "c3"]
+    dropout_threshold_test = 0.2
 
     run_eval(out_dir, data_cols, dropout_threshold_test)
 

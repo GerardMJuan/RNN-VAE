@@ -11,6 +11,19 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import torch
 from torch import nn
 
+def my_mean_absolute_error(y_true, y_pred):
+    """
+    Auxiliar function to compute the mean and std of the absolute error
+    """
+
+    maes_list = [mean_absolute_error(y_t, y_p) for (y_t, y_p) in zip(y_true, y_pred)]
+
+    mean_mae = np.mean(maes_list)
+    std_mae = np.std(maes_list)
+    return mean_mae, std_mae
+
+
+
 def eval_prediction(model, X_test, t_pred, pred_ch, DEVICE):
     """ Evaluate prediction of a set of time points for a trained model.
     We specify the number of timepoints tp of the data to predict.
@@ -76,8 +89,13 @@ def eval_prediction(model, X_test, t_pred, pred_ch, DEVICE):
                 y_pred.append(X_test_xnext[i][tpx, j, :])
             j += 1
         #Process it to predict it
-        mae_tp_ch = mean_absolute_error(y_true, y_pred)
-        results.append(mae_tp_ch)
+
+        err, err_std = my_mean_absolute_error(y_true, y_pred)
+        err = str(np.round(err, 2)) + '\pm' + str(np.round(err_std, 2))
+        results.append(err)
+
+        # mae_tp_ch = mean_absolute_error(y_true, y_pred)
+        # results.append(mae_tp_ch)
     return results
 
 
@@ -117,5 +135,9 @@ def eval_reconstruction(model, X, X_test, mask_test, av_ch, recon_ch):
     y_true = [tp for subj in y_true for tp in subj]
     # y_pred = [np.random.rand(*x.shape) for x in y_pred]
 
-    mae_rec = mean_absolute_error(y_true, y_pred)
-    return mae_rec
+    err, err_std = my_mean_absolute_error(y_true, y_pred)
+    err = str(np.round(err, 2)) + '\pm' + str(np.round(err_std, 2))
+    return err
+
+    # mae_rec = mean_absolute_error(y_true, y_pred)
+    # return mae_rec

@@ -50,7 +50,7 @@ def run_experiment(p, csv_path, out_dir, data_cols=[], output_to_file=False):
     # LOAD DATA
     #Start by not using validation data
     # this is a list of values
-    X_train, X_test, Y_train, Y_test, mri_col = load_multimodal_data(csv_path, data_cols, p["ch_type"], train_set=0.95, normalize=True, return_covariates=True)
+    X_train, X_test, Y_train, Y_test, mri_col = load_multimodal_data(csv_path, data_cols, p["ch_type"], train_set=0.8, normalize=True, return_covariates=True)
 
     p["n_feats"] = [x[0].shape[1] for x in X_train]
 
@@ -169,10 +169,10 @@ def run_experiment(p, csv_path, out_dir, data_cols=[], output_to_file=False):
 
 if __name__ == "__main__":
 
-    channels = ['_mri_vol','_mri_cort', '_cog']#, '_apoe']#, '_demog', '_apoe']
-    names = ["MRI vol", "MRI cort", "Cog"]#, 'APOE']#, "Demog", 'APOE']
-    ch_type = ["long", "long", "long"]#, 'bl']#, "bl", 'bl']
-    constrain = [None, None, 5]#, 2]#, 5, 5]
+    channels = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
+    names = ["MRI vol", "MRI cort", "Cog", "Demog", 'APOE']
+    ch_type = ["long", "long", "long", "bl", 'bl']
+    constrain = [None, None, 5, 2, 2]
 
     params = {
         "h_size": 50,
@@ -197,7 +197,7 @@ if __name__ == "__main__":
         "long_to_bl": True
     }
 
-    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/SMALLNetwork_10/"
+    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/supplementary_6/"
     #out_dir = "/homedtic/gmarti/EXPERIMENTS/RNN-VAE/experiments_postthesis/_h_10_x_10_z_30_cz_5/"
     csv_path = "data/multimodal_no_petfluid_train.csv"
     loss = run_experiment(params, csv_path, out_dir, channels)

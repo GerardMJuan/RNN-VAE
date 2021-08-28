@@ -65,7 +65,7 @@ def visualize_trajectory(X, out_dir, X_hat=None, feat='all', subj='all'):
                 x_i = X[ch][s][:,f]
                 namefig = f'ch{ch}_s{s}_f{f}.png'
                 plt.figure()
-                sns.lineplot(x=x_i, y=np.arange(len(x_i)))
+                sns.lineplot(x=np.arange(len(x_i)), y=x_i)
                 # TODO: IF X_HAT, ADD ANOTHER LINEPLOT HERE WITH THE X INFORMATION
                 plt.tight_layout()
                 plt.savefig(out_dir + namefig)
@@ -78,7 +78,7 @@ if __name__ == "__main__":
     I put it directly here because fuck it I don't really care anymore.
     """
     
-    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/synth_testing/"
+    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/metaexp_synth_proves/_h_20_z_5/"
 
     #load parameters
     p = eval(open(out_dir + "params.txt").read())
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     # [ntp n_ch, n_batch, n_feat]
     #as n_feat can be different across channels, ntp and n_ch need to be lists. n_batch and n_feat are the tensors
     lat_gen = LatentTemporalGenerator(p["ntp"], p["noise"], p["lat_dim"], p["n_channels"], p["n_feats"])
-    Z, X = lat_gen.generate_samples(p["nsamples"])
+    Z, X = lat_gen.generate_samples(50)
 
     # VISUALIZE LATENT SPACE, all dims
     out_dir_latent = out_dir + 'synth_latent/'
@@ -110,7 +110,7 @@ if __name__ == "__main__":
             visualize_latent_space(Z, out_dir_latent, feat=[i, j])
 
     # VISUALIZE TRAJECTORY, TEN RANDOM SUBJECTS AND F= 0
-    subj = np.random.choice(np.arange(p["nsamples"]), 10, replace=False)
+    subj = np.random.choice(np.arange(50), 10, replace=False)
     out_dir_traj = out_dir + 'synth_trajectories/'
     if not os.path.exists(out_dir_traj):
         os.makedirs(out_dir_traj)

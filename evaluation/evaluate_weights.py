@@ -9,6 +9,7 @@ This script will also serve to plot the desired figure relationships (have to de
 
 import sys
 import os
+from typing import TYPE_CHECKING, ValuesView
 sys.path.insert(0, os.path.abspath('./'))
 import torch
 from torch import nn
@@ -18,6 +19,37 @@ from rnnvae.utils import load_multimodal_data
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import matplotlib.colors as cl
+from sklearn.preprocessing import minmax_scale
+
+def prepare_brainpainter_data(synth_data, cols, suffix, out_dir, out_name):
+    """
+    This function needs to:
+
+    1. prepare the data wtih the correct format for brainpainter
+    3. Save it to disk
+    """
+    #Check range
+    # To prepare the data: 
+    # problem: range should be similar, if i normalize separately like this, maybe the values are then 
+    # not well compared (scaled differently)
+    #add the sufix
+
+    synth_data[synth_data<0] = (synth_data[synth_data<0] - min(synth_data)) * (2 - 0) / (max(synth_data) - min(synth_data)) + 0
+    synth_data[synth_data>0] = (synth_data[synth_data>0] - min(synth_data)) * (4 - 2) / (max(synth_data) - min(synth_data)) + 2
+
+    print(max(synth_data))
+    #lower bound should be 0, range should be the same
+
+    # create dataframe with the original columns (we already have the
+    # translation in the config.py of the brainpainter)
+    # "Image-name-unique" has to be the name of the first column (index)
+    df_brainpainter = pd.DataFrame(data=[synth_data], index= [f"img{i}" for i in range(len([synth_data]))], columns=[c + suffix for c in cols])
+    df_brainpainter.index.name = "Image-name-unique"
+
+    # save to disk
+    df_brainpainter.to_csv(out_dir + f"{out_name}.csv")
+
 
 def plot_weights_matrix(x, feat_list, z_list, out_dir, out_name):
     """
@@ -28,8 +60,8 @@ def plot_weights_matrix(x, feat_list, z_list, out_dir, out_name):
     #f, ax = plt.subplots(figsize=(11, 9))
 
     # Generate a custom diverging colormap
-    x_size = 0.3*len(feat_list)
-    y_size = 0.3*len(z_list)
+    x_size = 0.5*len(feat_list)
+    y_size = 0.5*len(z_list)
     plt.figure(figsize=(x_size,y_size))
     cmap = sns.diverging_palette(230, len(x), as_cmap=True)
     g = sns.heatmap(x, cmap=cmap, center=0, annot=False, linewidths=.5)#, cbar_kws={"shrink": .5})
@@ -54,13 +86,13 @@ def plot_weights_bar(x, feat_list, z_list, out_dir, out_name):
     #f, ax = plt.subplots(figsize=(11, 9))
     #this shape should be depending on the length of the list
     x_size = 0.5*len(feat_list)
-    y_size = 5
+    y_size = 3
     plt.figure(figsize=(x_size,y_size))
-    # Generate a custom diverging colormap
-    pal = sns.diverging_palette(230, 20, n=len(x), as_cmap=False)
-    rank = x.argsort().argsort()
 
-    pallete = np.array(pal[::-1])[rank]
+    # Generate a custom diverging colormappallete
+    pal = sns.diverging_palette(230, 20, as_cmap=True)
+    norm = cl.Normalize(vmin=-max(abs(x)), vmax=max(abs(x)))
+    pallete = [pal(norm(xi)) for xi in x]
     g = sns.barplot(x=list(range(len(x))), y=x, ci=None, palette=pallete, dodge=False)
     #g.legend_.remove()
     g.set_xticks(np.arange(len(x))+0.5) # <--- set the ticks first
@@ -117,12 +149,20 @@ def visualize_weights(out_dir, data_cols, dropout_threshold_test, output_to_file
     model.load(out_dir+'model.pt')
     #CHANGE DROPOUT
     if p["dropout"]:
-        model.dropout_threshold = 0.2
+        model.dropout_threshold = 0.1
 
     enc_weights = []
     dec_weights = []
 
     comp_list = []
+
+    ####IF DROPOUT, SELECT ONLY COMPS WITH DROPOUT > TAL
+    if model.dropout:
+        kept_comp = model.kept_components
+    else:
+        kept_comp = None
+    print(kept_comp)
+    print(model.dropout_comp)
 
     for i in range(len(p["n_feats"])):
         # z components that are included
@@ -178,15 +218,14 @@ def visualize_weights(out_dir, data_cols, dropout_threshold_test, output_to_file
     # plot barplot
     # note that here, maybe the z_dim doesnt correspond to each other
     for i in range(len(data_cols)):
-        
         #for that data col, select the correct z
         for z in range(len(comp_list[i])):
             #encoder
             plot_weights_bar(enc_weights[i][z], feat_list[i], [z], weights_dir, f'w_enc_{data_cols[i]}_z{comp_list[i][z]}')
             #decoder
             plot_weights_bar(dec_weights[i].T[z], feat_list[i], [z], weights_dir, f'w_dec_{data_cols[i]}_z{comp_list[i][z]}')
-            break
-        break
+            if data_cols[i] == '_mri_vol' or  data_cols[i] == '_mri_cort':
+                prepare_brainpainter_data(enc_weights[i][z], feat_list[i], data_cols[i], weights_dir, f'w_enc_{data_cols[i]}_z{comp_list[i][z]}')
 
     ##### 
     # WEIGHTS ACROSS CHANNELS
@@ -220,8 +259,6 @@ def visualize_weights(out_dir, data_cols, dropout_threshold_test, output_to_file
             # plot weights matrix with the new weights
             # TODO: NEED TO ADAPT SIZE TO THE ACTUAL LENGTH OF THE MATRIX
             plot_weights_matrix(W.T, feat_list[i], feat_list[j], weights_dir, f'w_crossch_{data_cols[i]}{data_cols[j]}')
-            break
-        break
 
 
     # TODO: FOR EACH Z_DIM SEPARATELY?
@@ -255,11 +292,6 @@ def visualize_weights(out_dir, data_cols, dropout_threshold_test, output_to_file
                 W =  np.outer(enc_w[:, comp_i], dec_w[comp_i, :])
                 # plot weights matrix with the new weights
                 plot_weights_matrix(W.T, feat_list[i], feat_list[j], weights_dir, f'w_crossch_{data_cols[i]}{data_cols[j]}_z{comp_list_both[comp_i]}')
-            break
-        break
-
-
-
 
 
 ## MAIN
