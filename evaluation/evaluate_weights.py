@@ -206,9 +206,9 @@ def visualize_weights(out_dir, data_cols, dropout_threshold_test, output_to_file
     for i in range(len(data_cols)):
         #encoder
         #transpose enc matrix so that we have the same shape for both
-        plot_weights_matrix(enc_weights[i], feat_list[i], comp_list[i], weights_dir, f'w_enc_{data_cols[i]}')
+        # plot_weights_matrix(enc_weights[i], feat_list[i], comp_list[i], weights_dir, f'w_enc_{data_cols[i]}')
         #decoder
-        plot_weights_matrix(dec_weights[i].T, feat_list[i], comp_list[i], weights_dir, f'w_dec_{data_cols[i]}')
+        # plot_weights_matrix(dec_weights[i].T, feat_list[i], comp_list[i], weights_dir, f'w_dec_{data_cols[i]}')
         break
 
     weights_dir = out_dir + "barweights_out_dir/"
@@ -221,9 +221,9 @@ def visualize_weights(out_dir, data_cols, dropout_threshold_test, output_to_file
         #for that data col, select the correct z
         for z in range(len(comp_list[i])):
             #encoder
-            plot_weights_bar(enc_weights[i][z], feat_list[i], [z], weights_dir, f'w_enc_{data_cols[i]}_z{comp_list[i][z]}')
+            # plot_weights_bar(enc_weights[i][z], feat_list[i], [z], weights_dir, f'w_enc_{data_cols[i]}_z{comp_list[i][z]}')
             #decoder
-            plot_weights_bar(dec_weights[i].T[z], feat_list[i], [z], weights_dir, f'w_dec_{data_cols[i]}_z{comp_list[i][z]}')
+            # plot_weights_bar(dec_weights[i].T[z], feat_list[i], [z], weights_dir, f'w_dec_{data_cols[i]}_z{comp_list[i][z]}')
             if data_cols[i] == '_mri_vol' or  data_cols[i] == '_mri_cort':
                 prepare_brainpainter_data(enc_weights[i][z], feat_list[i], data_cols[i], weights_dir, f'w_enc_{data_cols[i]}_z{comp_list[i][z]}')
 
@@ -258,7 +258,7 @@ def visualize_weights(out_dir, data_cols, dropout_threshold_test, output_to_file
             W =  np.matmul(enc_w, dec_w)
             # plot weights matrix with the new weights
             # TODO: NEED TO ADAPT SIZE TO THE ACTUAL LENGTH OF THE MATRIX
-            plot_weights_matrix(W.T, feat_list[i], feat_list[j], weights_dir, f'w_crossch_{data_cols[i]}{data_cols[j]}')
+            # plot_weights_matrix(W.T, feat_list[i], feat_list[j], weights_dir, f'w_crossch_{data_cols[i]}{data_cols[j]}')
 
 
     # TODO: FOR EACH Z_DIM SEPARATELY?
@@ -291,7 +291,7 @@ def visualize_weights(out_dir, data_cols, dropout_threshold_test, output_to_file
                 # multiply weights
                 W =  np.outer(enc_w[:, comp_i], dec_w[comp_i, :])
                 # plot weights matrix with the new weights
-                plot_weights_matrix(W.T, feat_list[i], feat_list[j], weights_dir, f'w_crossch_{data_cols[i]}{data_cols[j]}_z{comp_list_both[comp_i]}')
+                # plot_weights_matrix(W.T, feat_list[i], feat_list[j], weights_dir, f'w_crossch_{data_cols[i]}{data_cols[j]}_z{comp_list_both[comp_i]}')
 
 
 ## MAIN
