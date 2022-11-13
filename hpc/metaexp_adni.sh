@@ -1,21 +1,17 @@
 #!/bin/bash
-#SBATCH -J rnnvae
-#SBATCH -p high
-#SBATCH --workdir=/homedtic/gmarti/CODE/RNN-VAE
-#SBATCH --mem 32G
+#SBATCH -J mcrvae
+#SBATCH -p medium
+#SBATCH --mem 16G
 #SBATCH --gres=gpu:1
-#SBATCH -o LOGS/vae_small_%J.out # STDOUT
-#SBATCH -e LOGS/vae_small_%j.err # STDERR
+#SBATCH -o LOGS/mcrvae_revision.out # STDOUT
+#SBATCH -e LOGS/mcrvae_revision.err # STDERR
 
-source /etc/profile.d/lmod.sh
-source /etc/profile.d/easybuild.sh
-# source activate dlnn38
+export PATH="$HOME/project/anaconda3/bin:$PATH"
+source activate dlnn38
 
-#source activate /homedtic/gmarti/ENV/dl38
-module load Python
-module --ignore-cache load CUDA/10.2.89
-module --ignore-cache load cuDNN/7.6.5.32-CUDA-10.2.89
-source /homedtic/gmarti/pytorch/bin/activate
+module --ignore-cache load CUDA/11.4.3
+module --ignore-cache load cuDNN/8.2.4.15-CUDA-11.4
 
-# python scripts_mc/metaexp_adni.py
-python scripts_small/metaexp_adni_full.py
+# python scripts_small/metaexp_adni_full.py
+nvidia-smi
+python scripts_extra_exp/evaluate_sensitivity.py

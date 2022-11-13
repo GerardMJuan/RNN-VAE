@@ -795,7 +795,80 @@ class MCRNNVAE(nn.Module):
         self.optimizer.step()
         return loss.detach().item()
 
+    def jacobian(self, data_train, mask_train, nt, av_ch=None, task='prediction'):
+        """
+        Compute the jacobians for all the data in data train using mask_train
+        """
 
+        av_ch = range(self.n_channels) if av_ch is None else av_ch
+
+        #Again, això està malament. channels poden tenir differnet num de tps!
+        # data_ntp = data[0].size(0)
+        if self.is_fitted:
+            # initalize ht
+            # all channels have same number of samples, so x[0].size(1) can be hardcoded
+            ht = [Variable(torch.zeros(1, data_train[0].size(1), self.h_size, device=self.device)) for _ in range(self.n_channels)]
+            # initialize returns
+            z = [[] for _ in range(self.n_channels)]
+            pxz = [[] for _ in range(self.n_channels)]
+            zp = [[] for _ in range(self.n_channels)]
+            qzx = [[] for _ in range(self.n_channels)]
+
+            #For each timepoint
+            for tp in range(nt):
+                #Need to repopulate the list so that it contains a single time point, still being a list
+                #If we sample, we just use the
+                curr_channels = [i for i, x_ch in enumerate(data_train) if tp < x_ch.shape[0]]
+                x_t = [x_ch[tp, :, :] for i, x_ch in enumerate(data_train) if i in curr_channels]
+                mask_i = [mask_ch[tp, :, :] for i, mask_ch in enumerate(mask_train) if i in curr_channels]
+                #if we have already done baseline:
+                if tp > 0:
+                    x_t = [torch.where(mask_i[i], x_t[i], xhat[ch]) for i, ch in enumerate(curr_channels)]
+
+                # If we have x information, we do a normal step
+                xhat, hnext, zp_t, z_t, qzx_t, pxz_t = self.step_predict(x_t, ht, curr_channels)
+                for i in range(self.n_channels):
+                    #this xnext needs to be averaged across all the values, as it is reocnstructed from all channels
+                    z[i].append(z_t[i])
+                    pxz[i].append(pxz_t[i])
+                    zp[i].append(zp_t[i])
+                    qzx[i].append(qzx_t[i])
+                ht = hnext
+            
+            X_hat = [[] for _ in range(self.n_channels)]
+            for i in range(self.n_channels):
+                for tp in range(nt):
+                    # this is not adequate. We should always use the various channels to predict a single time point.
+                    #xhat = MCRNNVAE.p_to_prediction(pxz[i][tp][i])
+                    xhat = torch.stack([pxz[ch][tp][i].loc for ch in av_ch]).mean(0)
+                    X_hat[i].append(xhat)
+            
+            jacobians = [[] for _ in range(self.n_channels)]            
+            #COmpute the jacobian over X_hat, for each channel
+
+            for i in range(self.n_channels):
+                X_hat[i] = torch.stack(X_hat[i])
+                X_hat[i] = X_hat[i][:len(data_train[i])]*mask_train[i]
+
+                # hardcoded device fuck it
+                data_train[0].retain_grad()
+                data_train[1].retain_grad()
+                data_train[2].retain_grad()
+
+                X_hat[i].backward(gradient=data_train[i], retain_graph = True)
+
+                jacobians[0].append(data_train[0].grad.cpu().numpy())
+                jacobians[1].append(data_train[1].grad.cpu().numpy())
+                jacobians[2].append(data_train[2].grad.cpu().numpy())
+                
+                data_train[0].grad.zero_()
+                data_train[1].grad.zero_()
+                data_train[2].grad.zero_()
+
+            #jacobians = [np.mean(np.array(x)**2, axis=0) for x in jacobians]
+
+            return jacobians
+        
 
     def fit(self, data_train, data_val, mask_train=None, mask_val=None):
         """

@@ -1,4 +1,5 @@
 {
     "python.pythonPath": "C:\\Users\\gerar\\Anaconda3\\python.exe",
-    "jupyter.jupyterServerType": "remote"
+    "jupyter.jupyterServerType": "remote",
+    "python.analysis.typeCheckingMode": "basic"
 }
