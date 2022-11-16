@@ -138,6 +138,7 @@ if __name__ == "__main__":
         av_ch = params.av_ch
         X_test_fwd = model.predict(X_test_list, mask_test_list, ntp, av_ch, task='recon')
         X_test_fwd = X_test_fwd["xnext"]
+        
         #Remove normalization
         norm_vol = pickle.load( open(f"data/norm_values/_mri_vol_norm.pkl", 'rb'))
         norm_cort = pickle.load( open(f"data/norm_values/_mri_cort_norm.pkl", 'rb'))
