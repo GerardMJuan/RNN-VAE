@@ -54,7 +54,7 @@ csv_path_test = "data/multimodal_no_petfluid_test.csv"
 list_loss = []
 list_test = []
 
-base_out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/final_hyperparameter_search/"
+base_out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/revision_test_DELET/"
 
 if not os.path.exists(base_out_dir):
     os.makedirs(base_out_dir)
@@ -71,11 +71,11 @@ for p in ParameterGrid(params):
 
     out_dir = f"{base_out_dir}_h_{h_size}_z_{z_dim}_hid_{hidden}_n_{n_layers}/"
 
-    #t = time.time()
-    #loss = run_experiment(p, csv_path, out_dir, channels, output_to_file=True)
-    #df_loss = pd.DataFrame([loss])
-    #df_loss.to_csv(out_dir + "cv_results.csv")    
-    #elapsed = time.time() - t
+    t = time.time()
+    loss = run_experiment(p, csv_path, out_dir, channels, output_to_file=True)
+    df_loss = pd.DataFrame([loss])
+    df_loss.to_csv(out_dir + "cv_results.csv")    
+    elapsed = time.time() - t
     
     # Merge dictionaries with params, so that runs can be identified
     # only relevant params
@@ -98,6 +98,8 @@ for p in ParameterGrid(params):
     loss = res.to_dict()
     loss = {**loss, **rel_p}
     list_loss.append(loss)
+    break
+
 #Convert lists to dataframes
 df_loss = pd.DataFrame(list_loss)
 

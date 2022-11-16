@@ -17,6 +17,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import time
 
 def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, type='test', output_to_file=False):
     """
@@ -154,7 +155,10 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, type='test', 
             curr_name = p["ch_names"][i]
             to_recon = p["ch_names"][j]
             av_ch = [j]
+            tic = time.time()
             mae_rec = eval_reconstruction(model, X_test, X_test_list, mask_test_list, av_ch, i)
+            tac = time.time()
+            print(f'{curr_name} recon {to_recon} mae: time: {tac-tic}')
             results[i,j] = mae_rec
             # Get MAE result for that specific channel over all timepoints
             print(f"recon_{curr_name}_from{to_recon}_mae: {mae_rec}")
@@ -179,7 +183,10 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, type='test', 
     for i in range(len(X_test)):
         av_ch = list(range(len(X_test))).remove(i)
         to_recon = p["ch_names"][i]
+        tic = time.time()
         mae_rec = eval_reconstruction(model, X_test, X_test_list, mask_test_list, av_ch, i)
+        tac = time.time()
+        print(f'recon {to_recon}_fromall mae: time: {tac-tic}')
         results[i] = mae_rec
         # Get MAE result for that specific channel over all timepoints
         print(f"recon_{to_recon}_fromall_mae: {mae_rec}")
@@ -273,8 +280,7 @@ def run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, type='test', 
 ## MAIN
 ## here we put the parameters when we directly run the script
 if __name__ == "__main__":
-
-    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/final_hyperparameter_search/_h_50_z_30_hid_50_n_0/"
+    out_dir = "/homedtic/gmarti/EXPERIMENTS_MCVAE/revision_results/_h_30_z_15_hid_20_n_0/"
     data_cols = ['_mri_vol','_mri_cort', '_cog']
     dropout_threshold_test = 0.2
 
@@ -284,4 +290,4 @@ if __name__ == "__main__":
     #data_cols = ['_mri_vol','_mri_cort', '_cog', '_demog', '_apoe']
     #dropout_threshold_test = 0.2
 
-    run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, 'test', output_to_file=True)
+    run_eval(out_dir, test_csv, data_cols, dropout_threshold_test, 'test', output_to_file=False)

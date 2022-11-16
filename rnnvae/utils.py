@@ -1,11 +1,8 @@
 import numpy as np
 import pandas as pd
 import os
-import matplotlib.pyplot as plt
 from random import randint
-from sklearn.manifold import TSNE
-from sklearn.decomposition import TruncatedSVD
-from sklearn.model_selection import GroupShuffleSplit, ShuffleSplit, StratifiedShuffleSplit
+from sklearn.model_selection import ShuffleSplit
 import pickle
 
 def pickle_load(filename):

@@ -89,7 +89,6 @@ def eval_prediction(model, X_test, t_pred, pred_ch, DEVICE):
                 y_pred.append(X_test_xnext[i][tpx, j, :])
             j += 1
         #Process it to predict it
-
         err, err_std = my_mean_absolute_error(y_true, y_pred)
         err = str(np.round(err, 2)) + '\pm' + str(np.round(err_std, 2))
         results.append(err)

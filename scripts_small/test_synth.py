@@ -69,6 +69,7 @@ def run_experiment(p, out_dir, gen_data=True, data_suffix=None, output_to_file=F
         Z_test, X_test = lat_gen.generate_samples(int(p["nsamples"]*0.2), train=False)
 
     # Save the data used to the output disk
+    import pdb; pdb.set_trace()
     to_save = [Z_train, X_train, Z_test, X_test]
     filenames = [f"ztrain", f"xtrain", f"ztest", f"xtest"]
     for object, file in zip(to_save,filenames):
