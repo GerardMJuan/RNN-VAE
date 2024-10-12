@@ -135,7 +135,6 @@ data/
 .vscode/
 
 #Anything pdf or png should be ignored
-*.png
 *.pdf
 *.csv
 
